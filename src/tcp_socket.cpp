@@ -20,9 +20,9 @@ tcp_connection_socket::tcp_connection_socket()
 
 void tcp_connection_socket::send(const void *buff, size_t size)
 {
-    printf("%s\n", __func__);
     if (sockfd <= 0)
         throw "Socket is not initialized";
+    
 }
 
 void tcp_connection_socket::recv(void *buff, size_t size)
@@ -43,6 +43,47 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
 
 void tcp_client_socket::connect()
 {
+    struct addrinfo hints;
+    bzero(&hints, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = 0;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+
+    char port_s[10];
+    snprintf(port_s, sizeof port_s, "%d", port);
+
+    struct addrinfo *res, *rp;
+
+    // resolve given hostname to use it in bind
+    if (getaddrinfo(hostname, port_s, &hints, &res) < 0) {
+        print_errno();
+        throw "Could not resolve hostname";
+    }
+
+    // getaddrinfo can return multiple addresses, so test them all
+    // and just take first that succeed in `connect`
+    //
+    // PS. in our case when we ask for a specific ip/port, it should
+    // be unique but this `for` is more general way
+    bool connected = false;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        if (::connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            connected = true;
+            break;
+        } else
+            pr_warn("%s", "Could not connect client socket on ...");
+    }
+
+    freeaddrinfo(res);
+
+    if (!connected)
+        throw "Could not connect client socket";
+
+    pr_success("%s\n", "Socket successfully connected");
 }
 
 tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostname(hostname), port(port)
