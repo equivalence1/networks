@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
@@ -18,6 +19,10 @@ int main(int argc, char *argv[])
     struct tcp_server_socket *server_socket = new tcp_server_socket(host, port);
     stream_socket *cli_socket = server_socket->accept_one_client();
     char buff[100];
-    cli_socket->recv(buff, sizeof buff);
-    printf("received %s\n", buff);
+    while (1) {
+        cli_socket->recv(buff, sizeof buff);
+        printf("received opcode %d\n", (uint8_t)*((char *)buff + 2));
+        uint32_t ans = htonl(1);
+        cli_socket->send(&ans, sizeof ans);
+    }
 }

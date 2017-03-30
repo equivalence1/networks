@@ -1,10 +1,36 @@
 #include <tcp_socket.h>
+#include <common.h>
+#include <protocol.h>
 
 #include <stdint.h>
 #include <string.h>
+#include <string>
+#include <iostream>
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
+static struct tcp_client_socket *sock;
+
+void handle(const std::string &user_input)
+{
+    int len;
+    void *buff;
+
+    try {
+        buff = user_to_net(user_input, &len);
+    } catch (const char *s) {
+        pr_warn("%s\n", s);
+        return;
+    }
+
+    if (is_blocking((uint8_t)(*((char *)buff)))) {
+        sock->send(buff, len);
+        int32_t result = get_response(sock);
+        pr_success("%d\n", result);
+    }
+
+    free(buff);
+}
 
 int main(int argc, char *argv[])
 {
@@ -13,17 +39,19 @@ int main(int argc, char *argv[])
     if (argc > 2)
         port = atoi(argv[2]);
 
-    struct tcp_client_socket *sock = new tcp_client_socket(host, port);
-    sock->connect();
-    sock->send("bla-bla-bla", 10);
-    sock->send("1", 1);
-    sock->send("2", 1);
-    sock->send("3", 1);
-    sock->send("4", 1);
-    sock->send("5", 1);
-    sock->send("6", 1);
-    sock->send("7", 1);
-    sock->send("8", 1);
-    sock->send("9", 1);
-    sock->send("0", 1);
+    try {
+        sock = new tcp_client_socket(host, port);
+        sock->connect();
+
+        std::string user_input;
+        while (!std::cin.eof()) {
+            getline(std::cin, user_input);
+            if (user_input == "")
+                continue;
+            handle(user_input);
+        }
+    } catch (const char *s) {
+        // In client code we can just print error and exit if some failure occurred
+        pr_err("%s\n", s);
+    }
 }

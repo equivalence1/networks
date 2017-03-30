@@ -96,7 +96,7 @@ void tcp_connection_socket::recv(void *buff, size_t size)
             char ipstr[NI_MAXHOST];
 
             if (get_addr_host_port((struct sockaddr_in *)&addr, ipstr, &port) >= 0)
-                pr_info("Connection with %s:%d is closed", ipstr, port);
+                pr_info("Connection with %s:%d is closed\n", ipstr, port);
         }
 
         close(this->sockfd);
