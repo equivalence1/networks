@@ -1,8 +1,19 @@
 #include <tcp_socket.h>
 
+#include <stdint.h>
+#include <string.h>
+
+static const char *host = "localhost";
+static uint16_t port = 40001;
+
 int main(int argc, char *argv[])
 {
-    struct tcp_client_socket *sock = new tcp_client_socket("localhost", 40001);
+    if (argc > 1)
+        host = argv[1];
+    if (argc > 2)
+        port = atoi(argv[2]);
+
+    struct tcp_client_socket *sock = new tcp_client_socket(host, port);
     sock->connect();
     sock->send("bla-bla-bla", 10);
     sock->send("1", 1);
