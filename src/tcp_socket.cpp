@@ -23,11 +23,19 @@ tcp_connection_socket::tcp_connection_socket(int sockfd): tcp_connection_socket(
 void tcp_connection_socket::send(const void *buff, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->m};
+
     if (this->sockfd <= 0)
         throw "Socket is not initialized";
-    if (::send(this->sockfd, buff, size, 0) < 0) {
-        print_errno();
-        throw "Could not send";
+
+    size_t total_sent = 0;
+    int sent_right_now = 0;
+
+    while (total_sent != size) {
+        if ((sent_right_now = ::send(this->sockfd, (char *)buff + total_sent, size, 0)) < 0) {
+            print_errno();
+            throw "Could not send";
+        }
+        total_sent += sent_right_now;
     }
 }
 
@@ -60,6 +68,22 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
         print_errno();
         pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
+}
+
+/*
+ * used to notify user if connect/bind failed on returned after
+ * getaddrinfo address
+ */
+static
+void warn_op_fail(const char *op, struct addrinfo *rp)
+{
+    print_errno();
+    struct sockaddr_in *ip = (struct sockaddr_in *)rp->ai_addr;
+    void *addr = &(ip->sin_addr);
+    char ipstr[NI_MAXHOST];
+    inet_ntop(rp->ai_family, addr, ipstr, sizeof ipstr);
+    pr_warn("Could not %s on %s\n", op, ipstr);
+
 }
 
 void tcp_client_socket::connect()
@@ -98,7 +122,8 @@ void tcp_client_socket::connect()
         if (::connect(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             connected = true;
             break;
-        }
+        } else
+            warn_op_fail("connect", rp);
     }
 
     freeaddrinfo(res);
@@ -127,7 +152,7 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     bzero(&hints, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // we need this flag for server socket to perform bind/listen/accept
+    hints.ai_flags = 0; // we're specifing hostname (node) in getaddrinfo, so we don't need AF_PASSIVE
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_canonname = NULL;
     hints.ai_addr = NULL;
@@ -154,7 +179,8 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
         if (bind(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             binded = true;
             break;
-        }
+        } else
+            warn_op_fail("bind", rp);
     }
 
     freeaddrinfo(res);
