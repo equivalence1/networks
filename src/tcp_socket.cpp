@@ -10,6 +10,36 @@
 #include <netinet/tcp.h>
 #include <mutex>
 
+
+/*
+ * get host string and port number of address.
+ * @param ipstr should be a char array with a length >= NI_MAXHOST
+ */
+static
+int get_addr_host_port(const struct sockaddr_in *addr, char *ipstr, int *port)
+{
+    *port = ntohs(addr->sin_port);
+    if (inet_ntop(AF_INET, &addr->sin_addr, ipstr, NI_MAXHOST) == NULL)
+        return -1;
+    else
+        return 0;
+}
+
+/*
+ * used to notify user if connect/bind failed on returned after
+ * getaddrinfo address
+ */
+static
+void warn_op_fail(const char *op, struct addrinfo *rp)
+{
+    char ipstr[NI_MAXHOST];
+    int port;
+
+    print_errno();
+    if (get_addr_host_port((struct sockaddr_in *)rp->ai_addr, ipstr, &port) >= 0)
+        pr_warn("Could not %s on %s:%d\n", op, ipstr, port);
+}
+
 tcp_connection_socket::tcp_connection_socket()
 {
     this->sockfd = 0;
@@ -39,14 +69,38 @@ void tcp_connection_socket::send(const void *buff, size_t size)
     }
 }
 
+// i think this function should return int.
+// How else should I notify that connection was closed?
 void tcp_connection_socket::recv(void *buff, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->m};
+
     if (this->sockfd <= 0)
         throw "Socket is not initialized";
-    if (::recv(this->sockfd, buff, size, 0) < 0) {
+
+    int received = 0;
+
+    if ((received = ::recv(this->sockfd, buff, size, 0)) < 0) {
         print_errno();
         throw "Could not recv";
+    }
+
+    // connection was closed, inform about it
+    if (received == 0) {
+        socklen_t len;
+        struct sockaddr_storage addr;
+        len = sizeof addr;
+
+        if (getpeername(this->sockfd, (struct sockaddr*)&addr, &len) >= 0) {
+            int port;
+            char ipstr[NI_MAXHOST];
+
+            if (get_addr_host_port((struct sockaddr_in *)&addr, ipstr, &port) >= 0)
+                pr_info("Connection with %s:%d is closed", ipstr, port);
+        }
+
+        close(this->sockfd);
+        throw "Connection is closed";
     }
 }
 
@@ -68,22 +122,6 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
         print_errno();
         pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
-}
-
-/*
- * used to notify user if connect/bind failed on returned after
- * getaddrinfo address
- */
-static
-void warn_op_fail(const char *op, struct addrinfo *rp)
-{
-    print_errno();
-    struct sockaddr_in *ip = (struct sockaddr_in *)rp->ai_addr;
-    void *addr = &(ip->sin_addr);
-    char ipstr[NI_MAXHOST];
-    inet_ntop(rp->ai_family, addr, ipstr, sizeof ipstr);
-    pr_warn("Could not %s on %s\n", op, ipstr);
-
 }
 
 void tcp_client_socket::connect()
