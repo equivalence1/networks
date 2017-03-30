@@ -12,6 +12,7 @@ public:
     tcp_connection_socket(int sockfd);
     void send(const void *buff, size_t size);
     void recv(void *buff, size_t size);
+    virtual ~tcp_connection_socket();
 protected:
     int sockfd;
     std::mutex m;
@@ -32,6 +33,7 @@ struct tcp_server_socket: public stream_server_socket
 public:
     tcp_server_socket(const char *hostname, port_t port);
     stream_socket* accept_one_client();
+    ~tcp_server_socket();
 private:
     int sockfd;
     const char *hostname;

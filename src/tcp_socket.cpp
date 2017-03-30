@@ -266,3 +266,15 @@ stream_socket* tcp_server_socket::accept_one_client()
 
     return new tcp_connection_socket(new_sockfd);
 }
+
+tcp_connection_socket::~tcp_connection_socket()
+{
+    if (this->sockfd > 0)
+        close(this->sockfd);
+}
+
+tcp_server_socket::~tcp_server_socket()
+{
+    if (this->sockfd > 0)
+        close(this->sockfd);
+}
