@@ -3,6 +3,8 @@
 
 #include "stream_socket.h"
 
+#include <mutex>
+
 struct tcp_connection_socket: public stream_socket
 {
 public:
@@ -12,6 +14,7 @@ public:
     void recv(void *buff, size_t size);
 protected:
     int sockfd;
+    std::mutex m;
 };
 
 struct tcp_client_socket: public tcp_connection_socket

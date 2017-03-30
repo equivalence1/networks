@@ -9,18 +9,19 @@
 #include <strings.h>
 #include <netinet/tcp.h>
 
-tcp_connection_socket::tcp_connection_socket(int sockfd)
-{
-    this->sockfd = sockfd;
-}
-
 tcp_connection_socket::tcp_connection_socket()
 {
     this->sockfd = 0;
 }
 
+tcp_connection_socket::tcp_connection_socket(int sockfd): tcp_connection_socket()
+{
+    this->sockfd = sockfd;
+}
+
 void tcp_connection_socket::send(const void *buff, size_t size)
 {
+    std::lock_guard<std::mutex> lock{this->m};
     if (sockfd <= 0)
         throw "Socket is not initialized";
     if (::send(sockfd, buff, size, 0) < 0) {
@@ -31,6 +32,7 @@ void tcp_connection_socket::send(const void *buff, size_t size)
 
 void tcp_connection_socket::recv(void *buff, size_t size)
 {
+    std::lock_guard<std::mutex> lock{this->m};
     if (sockfd <= 0)
         throw "Socket is not initialized";
     if (::recv(sockfd, buff, size, 0) < 0) {
@@ -61,6 +63,8 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
 
 void tcp_client_socket::connect()
 {
+    std::lock_guard<std::mutex> lock{this->m};
+
     struct addrinfo hints;
     bzero(&hints, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
