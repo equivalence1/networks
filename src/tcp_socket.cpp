@@ -8,6 +8,7 @@
 #include <netdb.h>
 #include <strings.h>
 #include <netinet/tcp.h>
+#include <mutex>
 
 tcp_connection_socket::tcp_connection_socket()
 {
@@ -22,9 +23,9 @@ tcp_connection_socket::tcp_connection_socket(int sockfd): tcp_connection_socket(
 void tcp_connection_socket::send(const void *buff, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->m};
-    if (sockfd <= 0)
+    if (this->sockfd <= 0)
         throw "Socket is not initialized";
-    if (::send(sockfd, buff, size, 0) < 0) {
+    if (::send(this->sockfd, buff, size, 0) < 0) {
         print_errno();
         throw "Could not send";
     }
@@ -33,9 +34,9 @@ void tcp_connection_socket::send(const void *buff, size_t size)
 void tcp_connection_socket::recv(void *buff, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->m};
-    if (sockfd <= 0)
+    if (this->sockfd <= 0)
         throw "Socket is not initialized";
-    if (::recv(sockfd, buff, size, 0) < 0) {
+    if (::recv(this->sockfd, buff, size, 0) < 0) {
         print_errno();
         throw "Could not recv";
     }
@@ -43,19 +44,19 @@ void tcp_connection_socket::recv(void *buff, size_t size)
 
 tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostname(hostname), port(port)
 {
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
+    this->sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (this->sockfd < 0) {
         print_errno();
         throw "Could not create tcp socket";
     }
 
     int one = 1;
-    if (setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
+    if (setsockopt(this->sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
         print_errno();
         pr_warn("%s\n", "Could not set TCP_NODELAY option");
     }
 
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+    if (setsockopt(this->sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
         print_errno();
         pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
@@ -63,6 +64,7 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
 
 void tcp_client_socket::connect()
 {
+    // so that no thread can send before connection finished
     std::lock_guard<std::mutex> lock{this->m};
 
     struct addrinfo hints;
@@ -76,12 +78,12 @@ void tcp_client_socket::connect()
     hints.ai_next = NULL;
 
     char port_s[10];
-    snprintf(port_s, sizeof port_s, "%d", port);
+    snprintf(port_s, sizeof port_s, "%d", this->port);
 
     struct addrinfo *res, *rp;
 
     // resolve given hostname to use it in bind
-    if (getaddrinfo(hostname, port_s, &hints, &res) < 0) {
+    if (getaddrinfo(this->hostname, port_s, &hints, &res) < 0) {
         print_errno();
         throw "Could not resolve hostname";
     }
@@ -93,7 +95,7 @@ void tcp_client_socket::connect()
     // be unique but this `for` is more general way
     bool connected = false;
     for (rp = res; rp != NULL; rp = rp->ai_next) {
-        if (::connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+        if (::connect(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             connected = true;
             break;
         }
@@ -109,14 +111,14 @@ void tcp_client_socket::connect()
 
 tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostname(hostname), port(port)
 {
-    sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sockfd < 0) {
+    this->sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (this->sockfd < 0) {
         print_errno();
         throw "Could not create tcp socket";
     }
 
     int one = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+    if (setsockopt(this->sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
         print_errno();
         pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
@@ -132,12 +134,12 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     hints.ai_next = NULL;
 
     char port_s[10];
-    snprintf(port_s, sizeof port_s, "%d", port);
+    snprintf(port_s, sizeof port_s, "%d", this->port);
 
     struct addrinfo *res, *rp;
 
     // resolve given hostname to use it in bind
-    if (getaddrinfo(hostname, port_s, &hints, &res) < 0) {
+    if (getaddrinfo(this->hostname, port_s, &hints, &res) < 0) {
         print_errno();
         throw "Could not resolve hostname";
     }
@@ -149,7 +151,7 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     // be unique but this `for` is more general way
     bool binded = false;
     for (rp = res; rp != NULL; rp = rp->ai_next) {
-        if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+        if (bind(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             binded = true;
             break;
         }
@@ -160,7 +162,7 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     if (!binded)
         throw "Could not bind socket";
 
-    if (listen(sockfd, backlog) < 0) {
+    if (listen(this->sockfd, tcp_server_socket::backlog) < 0) {
         print_errno();
         throw "Socket listen failed";
     }
@@ -173,14 +175,14 @@ stream_socket* tcp_server_socket::accept_one_client()
     struct sockaddr peer_addr;
     socklen_t addrlen = sizeof peer_addr;
 
-    int new_sockfd = accept(sockfd, &peer_addr, &addrlen);
+    int new_sockfd = accept(this->sockfd, &peer_addr, &addrlen);
     if (new_sockfd < 0) {
         print_errno();
         throw "Could not accept new connection";
     }
 
     int one = 1;
-    if (setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
+    if (setsockopt(new_sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
         print_errno();
         pr_warn("%s\n", "Could not set TCP_NODELAY option on accepted socket");
     }
