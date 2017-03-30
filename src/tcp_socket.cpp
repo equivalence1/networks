@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <strings.h>
+#include <netinet/tcp.h>
 
 tcp_connection_socket::tcp_connection_socket(int sockfd)
 {
@@ -22,14 +23,20 @@ void tcp_connection_socket::send(const void *buff, size_t size)
 {
     if (sockfd <= 0)
         throw "Socket is not initialized";
-    
+    if (::send(sockfd, buff, size, 0) < 0) {
+        print_errno();
+        throw "Could not send";
+    }
 }
 
 void tcp_connection_socket::recv(void *buff, size_t size)
 {
-    printf("%s\n", __func__);
     if (sockfd <= 0)
         throw "Socket is not initialized";
+    if (::recv(sockfd, buff, size, 0) < 0) {
+        print_errno();
+        throw "Could not recv";
+    }
 }
 
 tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostname(hostname), port(port)
@@ -38,6 +45,17 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
     if (sockfd < 0) {
         print_errno();
         throw "Could not create tcp socket";
+    }
+
+    int one = 1;
+    if (setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
+        print_errno();
+        pr_warn("%s\n", "Could not set TCP_NODELAY option");
+    }
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+        print_errno();
+        pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
 }
 
@@ -74,8 +92,7 @@ void tcp_client_socket::connect()
         if (::connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             connected = true;
             break;
-        } else
-            pr_warn("%s", "Could not connect client socket on ...");
+        }
     }
 
     freeaddrinfo(res);
@@ -92,6 +109,12 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     if (sockfd < 0) {
         print_errno();
         throw "Could not create tcp socket";
+    }
+
+    int one = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+        print_errno();
+        pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
 
     struct addrinfo hints;
@@ -125,8 +148,7 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
         if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             binded = true;
             break;
-        } else
-            pr_warn("%s", "Could not bind server socket on ...");
+        }
     }
 
     freeaddrinfo(res);
@@ -151,6 +173,12 @@ stream_socket* tcp_server_socket::accept_one_client()
     if (new_sockfd < 0) {
         print_errno();
         throw "Could not accept new connection";
+    }
+
+    int one = 1;
+    if (setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
+        print_errno();
+        pr_warn("%s\n", "Could not set TCP_NODELAY option on accepted socket");
     }
 
     char host[NI_MAXHOST], service[NI_MAXSERV];
