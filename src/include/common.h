@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <exception>
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -35,5 +36,6 @@
         fprintf(stdout, fmt, ##__VA_ARGS__)
 
 void print_errno();
+void handle_eptr(std::exception_ptr eptr);
 
 #endif // __COMMON_H__

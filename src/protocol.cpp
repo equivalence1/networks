@@ -82,7 +82,7 @@ void* user_to_net(const std::string &user_query, int *len)
 
     std::vector<uint32_t> operands;
     for (size_t i = 1; i < splited_query.size(); i++) {
-        operands.push_back(htonl(stoul(splited_query[i])));
+        operands.push_back(htonl((uint32_t)stoul(splited_query[i])));
     }
 
     *len = msg_len;
@@ -101,6 +101,27 @@ void* user_to_net(const std::string &user_query, int *len)
         add_to_buff(buff, offset, operand);
 
     return buff;
+}
+
+/*
+ * convert received buffer into a pair --
+ * (opcode, operands vector)
+ */
+std::pair<uint8_t, std::vector<int32_t> >
+net_to_operands(void *buff, size_t len)
+{
+    uint8_t opcode = (uint8_t)*((char *)buff);
+    size_t offset = 1;
+    std::vector<int32_t> operands;
+
+    while (offset < len) {
+        uint32_t operand;
+        memcpy(&operand, (char *)buff + offset, sizeof operand);
+        operands.push_back(ntohl(operand));
+        offset += sizeof(uint32_t);
+    }
+
+    return std::make_pair(opcode, operands);
 }
 
 int32_t get_response(tcp_connection_socket *sock)

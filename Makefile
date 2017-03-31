@@ -9,7 +9,7 @@ CXXFLAGS = -Wall -Wpedantic -std=c++11
 client_sources = client.cpp tcp_socket.cpp common.cpp protocol.cpp
 client_objects = $(client_sources:.cpp=.o)
 
-server_sources = server.cpp tcp_socket.cpp common.cpp protocol.cpp
+server_sources = server.cpp tcp_socket.cpp common.cpp protocol.cpp calc.cpp
 server_objects = $(server_sources:.cpp=.o)
 
 all: $(bindir) $(objdir) client server

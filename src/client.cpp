@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <pthread.h>
+#include <exception>
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
@@ -110,10 +111,15 @@ void handle(const std::string &user_input)
         // we create it on stack cuz we don't need it afterwards, we wont join new thread
         pthread_t *thread = new pthread_t();
         /* 
-         * we need new connection for background job.
+         * we need new connection for non-blocking operations.
          * without it our next call to `recv` in main thread
          * will wait for our `recv` call made to get result of
          * `async` operation (fact, fib)
+         *
+         * Even if I add something like message id in protocol
+         * and will recv results of non-blocking operations
+         * while performing blocking ones, I won't be able to
+         * recv result while user is typing its request
          *
          * So as i see, this is the only way (though ugly) to do it.
          * We could theoretically just poll our main connection for a result
@@ -144,8 +150,8 @@ int main(int argc, char *argv[])
                 continue;
             handle(user_input);
         }
-    } catch (const char *s) {
-        // In client code we can just print error and exit if some failure occurred
-        pr_err("%s\n", s);
+    } catch (...) {
+        handle_eptr(std::current_exception());
+        return 0;
     }
 }
