@@ -32,7 +32,7 @@
 #define   FACT_OP      5
 #define   UNKNOWN_OP   255
 
-bool is_blocking(int opcode);
+bool is_blocking(void *buff);
 uint8_t get_opcode(const std::string &s);
 void* user_to_net(const std::string &user_query, int *len);
 int32_t get_response(tcp_connection_socket *sock);

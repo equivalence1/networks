@@ -26,8 +26,14 @@ std::vector<std::string> split(const std::string &s, char delim) {
     return elems;
 }
 
-bool is_blocking(int opcode)
+/*
+ * given buffer as specified in protocol
+ * return true if operation in this buffer is blocking
+ * false otherwise
+ */
+bool is_blocking(void *buff)
 {
+    uint8_t opcode = (uint8_t)(*((char *)buff + sizeof(uint16_t)));
     if (opcode == FIB_OP || opcode == FACT_OP)
         return false;
     return true;

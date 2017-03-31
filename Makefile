@@ -24,10 +24,10 @@ $(objdir):
 	mkdir -p $(objdir)
 
 client: $(client_objects)
-	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(client_objects)) -o $(bindir)/client
+	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(client_objects)) -o $(bindir)/client -lpthread
 
 server: $(server_objects)
-	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(server_objects)) -o $(bindir)/server
+	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(server_objects)) -o $(bindir)/server -lpthread
 
 %.o: $(srcdir)/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $(objdir)/$@ -I./src/include

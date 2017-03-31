@@ -6,11 +6,90 @@
 #include <string.h>
 #include <string>
 #include <iostream>
+#include <pthread.h>
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
 static struct tcp_client_socket *sock;
 
+/* we only need this class to wrap all data needed
+ * to send/recv in background job and pass it as
+ * (void *arg) in pthread_create
+ *
+ * think of it as a JavaBean
+ */
+class op_data_wrapper {
+public:
+    op_data_wrapper(tcp_client_socket *sock, void *buff, int len)
+    {
+        this->sock = sock;
+        this->buff = buff;
+        this->len = len;
+    }
+
+    tcp_client_socket* get_sock()
+    {
+        return this->sock;
+    }
+
+    void* get_buff()
+    {
+        return buff;
+    }
+
+    int get_len()
+    {
+        return len;
+    }
+
+    // when background job finished, we don't need sock and buff anymore
+    // so just free them
+    ~op_data_wrapper() {
+        free(buff);
+        delete sock;
+    }
+
+private:
+    tcp_client_socket *sock;
+    void *buff;
+    int len;
+};
+
+/*
+ * just send buffer on server, wait for response and print it
+ */
+static
+void send_and_recv(struct tcp_connection_socket *sock, void *buff, int len)
+{
+    sock->send(buff, len);
+    int32_t result = get_response(sock);
+    pr_success("%d\n", result);
+}
+
+static
+void* backgroud_op(void *data)
+{
+    try {
+        op_data_wrapper *op_data = (op_data_wrapper *)data;
+        op_data->get_sock()->connect();
+        send_and_recv(op_data->get_sock(), op_data->get_buff(), op_data->get_len());
+        delete op_data;
+    } catch (const char *err) {
+        pr_warn("Error '%s' occurred while performing background job\n", err);
+    } catch (...) {
+        pr_warn("%s\n", "Error occurred during background job");
+    }
+    return NULL;
+}
+
+/*
+ * handle user's input.
+ *
+ * parse it into a buffer as specified by our protocol,
+ * if operation is blocking, then send and recv result it a
+ * current thread, do it in background otherwise
+ */
+static
 void handle(const std::string &user_input)
 {
     int len;
@@ -23,13 +102,28 @@ void handle(const std::string &user_input)
         return;
     }
 
-    if (is_blocking((uint8_t)(*((char *)buff)))) {
-        sock->send(buff, len);
-        int32_t result = get_response(sock);
-        pr_success("%d\n", result);
+    if (is_blocking(buff)) {
+        printf("non blocking\n");
+        send_and_recv(sock, buff, len);
+        free(buff);
+    } else {
+        // we create it on stack cuz we don't need it afterwards, we wont join new thread
+        pthread_t *thread = new pthread_t();
+        /* 
+         * we need new connection for background job.
+         * without it our next call to `recv` in main thread
+         * will wait for our `recv` call made to get result of
+         * `async` operation (fact, fib)
+         *
+         * So as i see, this is the only way (though ugly) to do it.
+         * We could theoretically just poll our main connection for a result
+         * in background, but we can't specify NO_WAIT flag in our recv.
+         */
+        tcp_client_socket *new_connection = new tcp_client_socket(host, port);
+        op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
+        if (pthread_create(thread, NULL, backgroud_op, odw) < 0)
+            pr_warn("%s\n", "Could not start thread for background operation");
     }
-
-    free(buff);
 }
 
 int main(int argc, char *argv[])
