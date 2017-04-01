@@ -7,12 +7,13 @@ CXX = g++
 CXXFLAGS = -Wall -Wpedantic -std=c++11
 
 client_sources = client.cpp tcp_socket.cpp common.cpp protocol.cpp opcode.cpp
-client_objects = $(client_sources:.cpp=.o)
+client32_objects = $(client_sources:.cpp=.o_32)
+client64_objects = $(client_sources:.cpp=.o_64)
 
 server_sources = server.cpp tcp_socket.cpp common.cpp protocol.cpp calc.cpp opcode.cpp
-server_objects = $(server_sources:.cpp=.o)
+server_objects = $(server_sources:.cpp=.o_64)
 
-all: $(bindir) $(objdir) client server
+all: $(bindir) $(objdir) client32 client64 server
 
 debug: CXXFLAGS += -DDEBUG
 debug: all
@@ -23,15 +24,20 @@ $(bindir):
 $(objdir):
 	mkdir -p $(objdir)
 
-client: $(client_objects)
-	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(client_objects)) -o $(bindir)/client -lpthread
+client32: $(client32_objects)
+	$(CXX) $(CXXFLAGS) -m32 $(addprefix $(objdir)/, $(client32_objects)) -o $(bindir)/client32 -lpthread
+
+client64: $(client64_objects)
+	$(CXX) $(CXXFLAGS) -m64 $(addprefix $(objdir)/, $(client64_objects)) -o $(bindir)/client64 -lpthread
 
 server: $(server_objects)
 	$(CXX) $(CXXFLAGS) $(addprefix $(objdir)/, $(server_objects)) -o $(bindir)/server -lpthread
 
-%.o: $(srcdir)/%.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $(objdir)/$@ -I./src/include
+%.o_32: $(srcdir)/%.cpp
+	$(CXX) $(CXXFLAGS) -m32 -c $< -o $(objdir)/$@ -I./src/include
 
+%.o_64: $(srcdir)/%.cpp
+	$(CXX) $(CXXFLAGS) -m64 -c $< -o $(objdir)/$@ -I./src/include
 
 .PHONY: clean
 clean:
