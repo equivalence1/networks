@@ -51,6 +51,7 @@ public:
 private:
     stream_socket *sock;
 };
+
 /*
  * main handler of a new connection
  */
@@ -67,20 +68,19 @@ void* connection_handler(void *data)
             msg_len = ntohs(msg_len);
             msg_len -= sizeof msg_len;
 
-            printf("msg_len = %d\n", msg_len);
-
             // now get the rest of the message
             void *buff = malloc(msg_len);
             if (buff == NULL)
                 throw "No mem";
             buff_holder holder(buff); // RAII -- this done just to free buff in case of error
-
             sock_h.get_sock()->recv((char *)buff, msg_len);
+
+            // now get result of calculations
             std::pair<uint8_t, std::vector<int32_t> > requies_pair = net_to_operands(buff, msg_len);
-
             int32_t res = perform_op(requies_pair.first, requies_pair.second);
-            res = htonl(res);
 
+            // send result to the client
+            res = htonl(res);
             sock_h.get_sock()->send(&res, sizeof res);
         } catch (...) {
             handle_eptr(std::current_exception());

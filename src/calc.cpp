@@ -1,5 +1,6 @@
 #include <calc.h>
 #include <protocol.h>
+#include <opcode.h>
 
 #include <vector>
 #include <stdint.h>

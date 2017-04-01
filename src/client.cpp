@@ -1,6 +1,7 @@
 #include <tcp_socket.h>
 #include <common.h>
 #include <protocol.h>
+#include <opcode.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -75,10 +76,8 @@ void* backgroud_op(void *data)
         op_data->get_sock()->connect();
         send_and_recv(op_data->get_sock(), op_data->get_buff(), op_data->get_len());
         delete op_data;
-    } catch (const char *err) {
-        pr_warn("Error '%s' occurred while performing background job\n", err);
     } catch (...) {
-        pr_warn("%s\n", "Error occurred during background job");
+        handle_eptr(std::current_exception());
     }
     return NULL;
 }
@@ -98,13 +97,12 @@ void handle(const std::string &user_input)
 
     try {
         buff = user_to_net(user_input, &len);
-    } catch (const char *s) {
-        pr_warn("%s\n", s);
+    } catch (...) {
+        handle_eptr(std::current_exception());
         return;
     }
 
     if (is_blocking(buff)) {
-        printf("non blocking\n");
         send_and_recv(sock, buff, len);
         free(buff);
     } else {

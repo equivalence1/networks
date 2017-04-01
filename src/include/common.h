@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <exception>
+#include <string>
+#include <vector>
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -37,5 +39,6 @@
 
 void print_errno();
 void handle_eptr(std::exception_ptr eptr);
+std::vector<std::string> split(const std::string &s, char delim);
 
 #endif // __COMMON_H__

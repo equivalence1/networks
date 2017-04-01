@@ -1,60 +1,13 @@
 #include <protocol.h>
+#include <opcode.h>
+#include <common.h>
 
 #include <stdint.h>
 #include <string>
 #include <string.h>
-#include <sstream>
 #include <vector>
 #include <iterator>
 #include <arpa/inet.h>
-
-template<typename Out>
-static
-void split(const std::string &s, char delim, Out result) {
-    std::stringstream ss;
-    ss.str(s);
-    std::string item;
-    while (std::getline(ss, item, delim)) {
-        *(result++) = item;
-    }
-}
-
-static
-std::vector<std::string> split(const std::string &s, char delim) {
-    std::vector<std::string> elems;
-    split(s, delim, std::back_inserter(elems));
-    return elems;
-}
-
-/*
- * given buffer as specified in protocol
- * return true if operation in this buffer is blocking
- * false otherwise
- */
-bool is_blocking(void *buff)
-{
-    uint8_t opcode = (uint8_t)(*((char *)buff + sizeof(uint16_t)));
-    if (opcode == FIB_OP || opcode == FACT_OP)
-        return false;
-    return true;
-}
-
-uint8_t get_opcode(const std::string &s)
-{
-    if (s == "+" || s == "plus")
-        return PLUS_OP;
-    if (s == "-" || s == "minus")
-        return MINUS_OP;
-    if (s == "*" || s == "mult")
-        return MULT_OP;
-    if (s == "/" || s == "div")
-        return DIV_OP;
-    if (s == "fib")
-        return FIB_OP;
-    if (s == "fact")
-        return FACT_OP;
-    return UNKNOWN_OP;
-}
 
 #define add_to_buff(buff, offset, val) \
     do { \
@@ -93,7 +46,6 @@ void* user_to_net(const std::string &user_query, int *len)
     msg_len = htons(msg_len);
 
     // ok everything is prepared, now fill the buffer
-
     int offset = 0;
     add_to_buff(buff, offset, msg_len);
     add_to_buff(buff, offset, opcode);

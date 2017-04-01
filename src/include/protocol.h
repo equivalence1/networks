@@ -25,16 +25,6 @@
  *
  */
 
-#define   PLUS_OP      0
-#define   MINUS_OP     1
-#define   MULT_OP      2
-#define   DIV_OP       3
-#define   FIB_OP       4
-#define   FACT_OP      5
-#define   UNKNOWN_OP   255
-
-bool is_blocking(void *buff);
-uint8_t get_opcode(const std::string &s);
 void* user_to_net(const std::string &user_query, int *len);
 std::pair<uint8_t, std::vector<int32_t> > net_to_operands(void *buff, size_t len);
 int32_t get_response(tcp_connection_socket *sock);
