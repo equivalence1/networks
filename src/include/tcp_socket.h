@@ -5,7 +5,7 @@
 
 #include <mutex>
 
-struct tcp_connection_socket: public stream_socket
+struct tcp_connection_socket: virtual stream_socket
 {
 public:
     tcp_connection_socket();
@@ -18,11 +18,11 @@ protected:
     std::mutex m;
 };
 
-struct tcp_client_socket: public tcp_connection_socket
+struct tcp_client_socket: public tcp_connection_socket, public stream_client_socket
 {
 public:
     tcp_client_socket(const char *hostname, port_t port);
-    void connect();
+    virtual void connect();
 private:
     const char *hostname;
     const port_t port;
