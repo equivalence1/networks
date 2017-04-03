@@ -79,28 +79,32 @@ void tcp_connection_socket::recv(void *buff, size_t size)
         throw "Socket is not initialized";
 
     int received = 0;
-
-    if ((received = ::recv(this->sockfd, buff, size, 0)) < 0) {
-        print_errno();
-        throw "Could not recv";
-    }
-
-    // connection was closed, inform about it
-    if (received == 0) {
-        socklen_t len;
-        struct sockaddr_storage addr;
-        len = sizeof addr;
-
-        if (getpeername(this->sockfd, (struct sockaddr*)&addr, &len) >= 0) {
-            int port;
-            char ipstr[NI_MAXHOST];
-
-            if (get_addr_host_port((struct sockaddr_in *)&addr, ipstr, &port) >= 0)
-                pr_info("Connection with %s:%d is closed\n", ipstr, port);
+    int total_received = 0;
+    while (total_received != (int)size) {
+        if ((received = ::recv(this->sockfd, (char *)buff + total_received, size - total_received, 0)) < 0) {
+            print_errno();
+            throw "Could not recv";
         }
 
-        close(this->sockfd);
-        throw "Connection is closed";
+        // connection was closed, inform about it
+        if (received == 0) {
+            socklen_t len;
+            struct sockaddr_storage addr;
+            len = sizeof addr;
+
+            if (getpeername(this->sockfd, (struct sockaddr*)&addr, &len) >= 0) {
+                int port;
+                char ipstr[NI_MAXHOST];
+
+                if (get_addr_host_port((struct sockaddr_in *)&addr, ipstr, &port) >= 0)
+                    pr_info("Connection with %s:%d is closed\n", ipstr, port);
+            }
+
+            close(this->sockfd);
+            throw "Connection is closed";
+        }
+
+        total_received += received;
     }
 }
 
@@ -122,12 +126,16 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
         print_errno();
         pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
+
+    this->connected = false;
 }
 
 void tcp_client_socket::connect()
 {
     // so that no thread can send before connection finished
     std::lock_guard<std::mutex> lock{this->m};
+    if (this->connected)
+        return;
 
     struct addrinfo hints;
     bzero(&hints, sizeof(struct addrinfo));
@@ -155,10 +163,9 @@ void tcp_client_socket::connect()
     //
     // PS. in our case when we ask for a specific ip/port, it should
     // be unique but this `for` is more general way
-    bool connected = false;
     for (rp = res; rp != NULL; rp = rp->ai_next) {
         if (::connect(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
-            connected = true;
+            this->connected = true;
             break;
         } else
             warn_op_fail("connect", rp);
@@ -166,7 +173,7 @@ void tcp_client_socket::connect()
 
     freeaddrinfo(res);
 
-    if (!connected)
+    if (!this->connected)
         throw "Could not connect client socket";
 
     pr_success("%s\n", "Socket successfully connected");

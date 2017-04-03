@@ -26,6 +26,7 @@ public:
 private:
     const char *hostname;
     const port_t port;
+    bool connected;
 };
 
 struct tcp_server_socket: public stream_server_socket

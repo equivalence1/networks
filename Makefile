@@ -13,7 +13,10 @@ client64_objects = $(client_sources:.cpp=.o_64)
 server_sources = server.cpp tcp_socket.cpp common.cpp protocol.cpp calc.cpp opcode.cpp
 server_objects = $(server_sources:.cpp=.o_64)
 
-all: $(bindir) $(objdir) client32 client64 server
+test_sources = tcp_socket.cpp test.cpp common.cpp
+test_objects = $(test_sources:.cpp=.o_64)
+
+all: $(bindir) $(objdir) client32 client64 server test
 
 debug: CXXFLAGS += -DDEBUG
 debug: all
@@ -23,6 +26,9 @@ $(bindir):
 
 $(objdir):
 	mkdir -p $(objdir)
+
+test: $(test_objects)
+	$(CXX) $(CXXFLAGS) -m64 $(addprefix $(objdir)/, $(test_objects)) -o $(bindir)/test -lpthread
 
 client32: $(client32_objects)
 	$(CXX) $(CXXFLAGS) -m32 $(addprefix $(objdir)/, $(client32_objects)) -o $(bindir)/client32 -lpthread
