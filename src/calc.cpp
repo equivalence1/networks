@@ -5,9 +5,10 @@
 #include <vector>
 #include <stdint.h>
 #include <algorithm>
+#include <assert.h>
 
 static
-int32_t plus(std::vector<int32_t> operands)
+int32_t plus(std::vector<int32_t> &operands)
 {
     int32_t res = 0;
     for(auto const& operand: operands)
@@ -16,7 +17,7 @@ int32_t plus(std::vector<int32_t> operands)
 }
 
 static
-int32_t minus(std::vector<int32_t> operands)
+int32_t minus(std::vector<int32_t> &operands)
 {
     int32_t res = operands[0];
     for (size_t i = 1; i < operands.size(); i++)
@@ -25,7 +26,7 @@ int32_t minus(std::vector<int32_t> operands)
 }
 
 static
-int32_t mult(std::vector<int32_t> operands)
+int32_t mult(std::vector<int32_t> &operands)
 {
     int32_t res = 1;
     for (auto const& operand: operands)
@@ -34,7 +35,7 @@ int32_t mult(std::vector<int32_t> operands)
 }
 
 static
-int32_t div(std::vector<int32_t> operands)
+int32_t div(std::vector<int32_t> &operands)
 {
     int32_t res = operands[0];
     for (size_t i = 1; i < operands.size(); i++)
@@ -43,7 +44,7 @@ int32_t div(std::vector<int32_t> operands)
 }
 
 static
-int32_t fact(std::vector<int32_t> operands)
+int32_t fact(std::vector<int32_t> &operands)
 {
     int32_t x = operands[0];
     int32_t res = 1;
@@ -55,7 +56,7 @@ int32_t fact(std::vector<int32_t> operands)
 }
 
 static
-int32_t fib(std::vector<int32_t> operands)
+int32_t fib(std::vector<int32_t> &operands)
 {
     int32_t a = 1;
     int32_t b = 0;
@@ -89,5 +90,6 @@ int32_t perform_op(uint8_t opcode, std::vector<int32_t> &operands)
         case FACT_OP:
             return fact(operands);
     }
+    assert(false);
     return 0; // can never happen
 }

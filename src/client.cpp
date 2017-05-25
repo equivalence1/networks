@@ -107,7 +107,7 @@ void handle(const std::string &user_input)
         free(buff);
     } else {
         // we create it on stack cuz we don't need it afterwards, we wont join new thread
-        pthread_t *thread = new pthread_t();
+        pthread_t thread;
         /* 
          * we need new connection for non-blocking operations.
          * without it our next call to `recv` in main thread
@@ -125,7 +125,7 @@ void handle(const std::string &user_input)
          */
         tcp_client_socket *new_connection = new tcp_client_socket(host, port);
         op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
-        if (pthread_create(thread, NULL, backgroud_op, odw) < 0)
+        if (pthread_create(&thread, NULL, backgroud_op, odw) < 0)
             pr_warn("%s\n", "Could not start thread for background operation");
     }
 }

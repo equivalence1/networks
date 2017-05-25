@@ -57,11 +57,13 @@ void tcp_connection_socket::send(const void *buff, size_t size)
     if (this->sockfd <= 0)
         throw "Socket is not initialized";
 
+    int flags = MSG_NOSIGNAL; // don't generate sigpipe
+
     size_t total_sent = 0;
     int sent_right_now = 0;
 
     while (total_sent != size) {
-        if ((sent_right_now = ::send(this->sockfd, (char *)buff + total_sent, size, 0)) < 0) {
+        if ((sent_right_now = ::send(this->sockfd, (char *)buff + total_sent, size, flags)) < 0) {
             print_errno();
             throw "Could not send";
         }
@@ -120,11 +122,6 @@ tcp_client_socket::tcp_client_socket(const char *hostname, port_t port): hostnam
     if (setsockopt(this->sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(int)) < 0) {
         print_errno();
         pr_warn("%s\n", "Could not set TCP_NODELAY option");
-    }
-
-    if (setsockopt(this->sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
-        print_errno();
-        pr_warn("%s\n", "Could not set SO_REUSEADDR option");
     }
 
     this->connected = false;
@@ -197,7 +194,7 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     bzero(&hints, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = 0; // we're specifing hostname (node) in getaddrinfo, so we don't need AF_PASSIVE
+    hints.ai_flags = AI_PASSIVE; // in case if node (i.e. hostname) is null
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_canonname = NULL;
     hints.ai_addr = NULL;
@@ -241,13 +238,23 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     pr_success("%s\n", "Server socket is listening for connections");
 }
 
+static int inline bad_sockfd(int sockfd)
+{
+    return (sockfd == ENETDOWN) || (sockfd == EPROTO) || (sockfd == ENOPROTOOPT)
+            || (sockfd == EHOSTDOWN) || (sockfd == ENONET) || (sockfd == EHOSTUNREACH)
+            || (sockfd == EOPNOTSUPP) || (sockfd == ENETUNREACH) || (sockfd == EAGAIN);
+}
+
 stream_socket* tcp_server_socket::accept_one_client()
 {
     struct sockaddr peer_addr;
     socklen_t addrlen = sizeof peer_addr;
 
-    int new_sockfd = accept(this->sockfd, &peer_addr, &addrlen);
-    if (new_sockfd < 0) {
+    int new_sockfd = EAGAIN;
+    for (int i = 0; (i < 3) && bad_sockfd(new_sockfd); i++)
+        new_sockfd = accept(this->sockfd, &peer_addr, &addrlen);
+
+    if (new_sockfd <= 0) {
         print_errno();
         throw "Could not accept new connection";
     }

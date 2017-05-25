@@ -12,11 +12,11 @@
 #include <vector>
 #include <iostream>
 #include <exception>
+#include <memory>
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
 
-// this struct is just for RAII
 class buff_holder {
 public:
     buff_holder(void *buff) {
@@ -34,37 +34,19 @@ private:
     void *buff;
 };
 
-// this struct is just for RAII
-class sock_holder {
-public:
-    sock_holder(stream_socket *sock) {
-        this->sock = sock;
-    }
-
-    stream_socket* get_sock() {
-        return this->sock;
-    }
-
-    ~sock_holder() {
-        delete this->sock;
-    }
-private:
-    stream_socket *sock;
-};
-
 /*
  * main handler of a new connection
  */
 static
 void* connection_handler(void *data)
 {
-    sock_holder sock_h((stream_socket *)data);
+    std::unique_ptr<stream_socket> sock_h((stream_socket *)data); // RAII
 
     while (true) {
         try {
             // get msg_len first
             uint16_t msg_len;
-            sock_h.get_sock()->recv(&msg_len, sizeof msg_len);
+            sock_h->recv(&msg_len, sizeof msg_len);
             msg_len = ntohs(msg_len);
             msg_len -= sizeof msg_len;
 
@@ -72,8 +54,8 @@ void* connection_handler(void *data)
             void *buff = malloc(msg_len);
             if (buff == NULL)
                 throw "No mem";
-            buff_holder holder(buff); // RAII -- this done just to free buff in case of error
-            sock_h.get_sock()->recv((char *)buff, msg_len);
+            buff_holder holder(buff); // RAII
+            sock_h->recv((char *)buff, msg_len);
 
             // now get result of calculations
             std::pair<uint8_t, std::vector<int32_t> > requies_pair = net_to_operands(buff, msg_len);
@@ -81,7 +63,7 @@ void* connection_handler(void *data)
 
             // send result to the client
             res = htonl(res);
-            sock_h.get_sock()->send(&res, sizeof res);
+            sock_h->send(&res, sizeof res);
         } catch (...) {
             handle_eptr(std::current_exception());
             return NULL;
