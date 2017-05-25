@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <stdlib.h>
 
 void print_errno()
 {
@@ -47,4 +48,10 @@ std::vector<std::string> split(const std::string &s, char delim) {
         if (elem != "")
             result.push_back(elem);
     return result;
+}
+
+int is_tcp()
+{
+    char *socket_type_s = getenv("STREAM_SOCK_TYPE");
+    return (socket_type_s == NULL || !strcmp(socket_type_s, "tcp") );
 }
