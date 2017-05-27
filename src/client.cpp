@@ -74,7 +74,9 @@ void* backgroud_op(void *data)
 {
     try {
         op_data_wrapper *op_data = (op_data_wrapper *)data;
+printf(":::: connecting\n");
         op_data->get_sock()->connect();
+printf(":::: sending\n");
         send_and_recv(op_data->get_sock(), op_data->get_buff(), op_data->get_len());
         delete op_data;
     } catch (...) {
@@ -104,9 +106,11 @@ void handle(const std::string &user_input)
     }
 
     if (is_blocking(buff)) {
+printf("not blocking\n");
         send_and_recv(sock, buff, len);
         free(buff);
     } else {
+printf("blocking\n");
         // we create it on stack cuz we don't need it afterwards, we wont join new thread
         pthread_t thread;
         /* 
@@ -125,10 +129,13 @@ void handle(const std::string &user_input)
          * in background, but we can't specify NO_WAIT flag in our recv.
          */
         stream_client_socket *new_connection;
-        if (is_tcp())
+        if (is_tcp()) {
+            pr_info("%s\n", "using TCP socket\n");
             new_connection = new tcp_client_socket(host, port);
-        else
+        } else {
+            pr_info("%s\n", "using AU socket\n");
             new_connection = new au_stream_client_socket(host, port);
+        }
         op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
         if (pthread_create(&thread, NULL, backgroud_op, odw) < 0)
             pr_warn("%s\n", "Could not start thread for background operation");

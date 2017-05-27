@@ -42,7 +42,7 @@ static
 void* connection_handler(void *data)
 {
     std::unique_ptr<stream_socket> sock_h((stream_socket *)data); // RAII
-
+printf("handling connection\n"); // TODO
     while (true) {
         try {
             // get msg_len first

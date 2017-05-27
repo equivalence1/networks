@@ -28,8 +28,12 @@ struct recv_buffer
 {
 public:
     recv_buffer(size_t size);
+    size_t write(void *src, size_t size);
+    size_t copy(void *dst, size_t size);
     void init_seq_num(size_t new_seq);
     size_t get_seq_num();
+    size_t filled_size();
+    bool is_full();
     ~recv_buffer();
 private:
     size_t size;

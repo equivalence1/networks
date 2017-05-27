@@ -1,6 +1,8 @@
 #include <net_utils.h>
 #include <common.h>
 
+#include <cmath>
+
 // send buffer
 
 send_buffer::send_buffer(size_t size)
@@ -37,6 +39,40 @@ recv_buffer::recv_buffer(size_t size)
         throw "No mem";
     l = r = 0;
     this->size = size;
+}
+
+size_t recv_buffer::filled_size()
+{
+    return r - l;
+}
+
+bool recv_buffer::is_full()
+{
+    return this->filled_size() == size;
+}
+
+size_t recv_buffer::write(void *src, size_t size)
+{
+    int to_write = std::min(size, this->size - (r - l));
+
+    for (int i = 0; i < to_write; i++) {
+        ((char *)buff)[(r + i) % this->size] = ((char *)src)[i];
+    }
+    r = (r + to_write) % this->size;
+
+    return to_write;
+}
+
+size_t recv_buffer::copy(void *dst, size_t size)
+{
+    int to_copy = std::min(size, (r - l) % this->size);
+
+    for (int i = 0; i < to_copy; i++) {
+        ((char *)dst)[i] = ((char *)buff)[(l + i) % this->size];
+    }
+    l = (l + to_copy) % this->size; // TODO should not change l here
+
+    return to_copy;
 }
 
 void recv_buffer::init_seq_num(size_t new_seq)

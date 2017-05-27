@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <strings.h>
 #include <netinet/tcp.h>
+#include <string.h>
 
 #define IPPROTO_AU 200
 
@@ -29,10 +30,32 @@ au_stream_socket::au_stream_socket(int sockfd, struct sockaddr remote_addr): au_
 
 void au_stream_socket::send(const void *buff, size_t size)
 {
+    au_packet packet = {0};
+    packet.header.source_port = htons(this->port);
+    packet.header.dest_port = htons(this->remote_port);
+
+    memcpy(&packet.data[0], buff, size);
+    printf("sending %d bytes\n", size);
+// TODO
+    this->packet_send(&packet, size + sizeof(au_packet_header));
 }
 
 void au_stream_socket::recv(void *buff, size_t size)
 {
+    ip_packet recved_packet;
+
+    size_t total_received = recv_buff->filled_size();
+    size_t recved_size = 0;
+    while (total_received < size) {
+printf("recving packet\n");
+        packet_recv(&recved_packet);
+        recved_size = ntohs(recved_packet.header.tot_len) - sizeof(au_packet_header) - sizeof(iphdr);
+printf("recved_size %d\n", recved_size);
+        recv_buff->write(recved_packet.au_data.data, recved_size);
+        total_received += recved_size;
+    }
+
+    recv_buff->copy(buff, size);
 }
 
 void au_stream_socket::packet_send(au_packet *packet, size_t size)
@@ -64,18 +87,23 @@ void au_stream_socket::packet_recv(ip_packet *packet)
 
 bool au_stream_socket::good_packet(ip_packet *packet)
 {
-    size_t len = packet->header.tot_len - sizeof(packet->header);
+    size_t len = ntohs(packet->header.tot_len) - sizeof(packet->header);
     uint16_t csum = ntohs(packet->au_data.header.csum);
     packet->au_data.header.csum = 0;
-    if (get_csum((void *)&packet->au_data, len) != csum)
+    if (get_csum((void *)&packet->au_data, len) != csum) {
+        printf("csum failed\n");
         return false;
+    }
     if (packet->au_data.header.dest_port != htons(this->port)) {
+        printf("dest port failed\n");
         return false;
     }
     if (packet->au_data.header.source_port != htons(this->remote_port)) {
+        printf("src port failed\n");
         return false;
     }
     if (packet->header.saddr != (*(struct sockaddr_in *)&this->remote_addr).sin_addr.s_addr) {
+        printf("ip failed\n");
         return false;
     }
     return true;
@@ -83,6 +111,11 @@ bool au_stream_socket::good_packet(ip_packet *packet)
 
 au_stream_socket::~au_stream_socket()
 {
+    delete this->send_buff;
+    delete this->recv_buff;
+
+    if (this->sockfd > 0)
+        close(this->sockfd);
 }
 
 // ==========
@@ -90,6 +123,7 @@ au_stream_socket::~au_stream_socket()
 au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t server_port): hostname(hostname)
 {
     this->remote_port = server_port;
+    this->connected = false;
 
     this->sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_AU);
     if (this->sockfd < 0) {
@@ -98,12 +132,14 @@ au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t se
     }
 }
 
+static int glob_port = 100; // TODO
+
 void au_stream_client_socket::connect()
 {
     if (this->connected)
         return;
 
-    this->port = 123; // TODO
+    this->port = (glob_port++); // TODO
 
     struct addrinfo hints;
     bzero(&hints, sizeof(struct addrinfo));
@@ -134,7 +170,6 @@ void au_stream_client_socket::connect()
     this->send_ack();
 
     pr_success("%s\n", "Connection established!");
-    while (true);
     // Yey, we are connected!
     this->connected = true;
 }
@@ -148,9 +183,12 @@ void au_stream_client_socket::send_syn()
     syn_packet.header.flags = AU_PACKET_SYN;
 
     try {
+printf("sending syn\n");
         this->packet_send(&syn_packet, sizeof(struct au_packet_header));
+printf("sent syn\n");
     } catch (...) {
         handle_eptr(std::current_exception());
+printf("syn failed\n");
         throw "Could not send SYN packet";
     }
 
@@ -333,13 +371,17 @@ au_stream_socket* au_stream_server_socket::create_new_connection(ip_packet *recv
 
 bool au_stream_server_socket::good_packet(ip_packet *packet)
 {
-    size_t len = packet->header.tot_len - sizeof(packet->header);
+    size_t len = ntohs(packet->header.tot_len) - sizeof(packet->header);
     uint16_t csum = ntohs(packet->au_data.header.csum);
     packet->au_data.header.csum = 0;
-    if (get_csum((void *)&packet->au_data, len) != csum)
+    if (get_csum((void *)&packet->au_data, len) != csum) {
+printf("server failed csum\n");
         return false;
-    if (packet->au_data.header.dest_port != htons(this->port))
+    }
+    if (packet->au_data.header.dest_port != htons(this->port)) {
+printf("server failed port (server's port: %d, dest port %d)\n", this->port, ntohs(packet->au_data.header.dest_port));
         return false;
+    }
     return true;
 }
 
