@@ -245,7 +245,7 @@ stream_socket* au_stream_server_socket::accept_one_client()
     // 1. receive syn packet
 
     while (true) {
-        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, &this->self_addr, &addrlen); // TODO NULL?
+        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, NULL, 0);
         if (res == EAGAIN)
             continue;
         if (res < 0) {
@@ -281,7 +281,7 @@ stream_socket* au_stream_server_socket::accept_one_client()
     // 3. wait for ack packet
 
     while (true) {
-        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, &this->self_addr, &addrlen); // TODO NULL?
+        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, &new_connection->remote_addr, &new_connection->addrlen);
         if (res == EAGAIN)
             continue;
         if (res < 0) {

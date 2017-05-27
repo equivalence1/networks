@@ -48,9 +48,8 @@ public:
     send_buffer *send_buff;
     recv_buffer *recv_buff;
 
-protected:
     void init_remote_addr(struct sockaddr remote_addr);
-protected:
+public:
     struct sockaddr remote_addr;
     socklen_t addrlen;
     int sockfd;
