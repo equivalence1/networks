@@ -143,10 +143,13 @@ int main(int argc, char *argv[])
         port = atoi(argv[2]);
 
     try {
-        if (is_tcp())
+        if (is_tcp()) {
+            pr_info("%s\n", "using TCP sockets");
             sock = new tcp_client_socket(host, port);
-        else
+        } else {
+            pr_info("%s\n", "using AU sockets");
             sock = new au_stream_client_socket(host, port);
+        }
         sock->connect();
 
         std::string user_input;
