@@ -43,16 +43,21 @@ public:
     virtual ~au_stream_socket();
 
     void packet_send(au_packet *packet, size_t size); // directly sends packet
-    void packet_recv(au_packet *packet, size_t size); // directly recvs packet
+    void packet_recv(ip_packet *packet); // directly recvs packet
 
+    void init_remote_addr(struct sockaddr remote_addr);
+protected:
+    bool good_packet(ip_packet *packet);
+public:
     send_buffer *send_buff;
     recv_buffer *recv_buff;
 
-    void init_remote_addr(struct sockaddr remote_addr);
-public:
     struct sockaddr remote_addr;
     socklen_t addrlen;
     int sockfd;
+
+    port_t remote_port;
+    port_t port;
 };
 
 struct au_stream_client_socket: public au_stream_socket, public stream_client_socket
@@ -66,8 +71,6 @@ private:
     void send_ack();
 
     const char *hostname;
-    const port_t server_port;
-    port_t client_port;
     bool connected;
 };
 
@@ -78,9 +81,9 @@ public:
     stream_socket* accept_one_client();
     ~au_stream_server_socket();
 private:
-    void init_self_addr(struct sockaddr self_addr);
+    bool good_packet(ip_packet *packet);
+private:
     au_stream_socket* create_new_connection(ip_packet *recved_packet);
-    struct sockaddr self_addr;
     int sockfd;
     const char *hostname;
     const port_t port;

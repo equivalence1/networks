@@ -12,18 +12,6 @@
 
 #define IPPROTO_AU 200
 
-bool good_packet(ip_packet *packet, uint16_t port)
-{
-    size_t len = packet->header.tot_len - sizeof(packet->header);
-    uint16_t csum = ntohs(packet->au_data.header.csum);
-    packet->au_data.header.csum = 0;
-    if (get_csum((void *)&packet->au_data, len) != csum)
-        return false;
-    if (packet->au_data.header.dest_port != htons(port))
-        return false;
-    return true;
-}
-
 au_stream_socket::au_stream_socket()
 {
     this->sockfd = 0;
@@ -47,12 +35,6 @@ void au_stream_socket::recv(void *buff, size_t size)
 {
 }
 
-void au_stream_socket::init_remote_addr(struct sockaddr remote_addr)
-{
-    this->remote_addr = remote_addr;
-    this->addrlen = sizeof remote_addr;
-}
-
 void au_stream_socket::packet_send(au_packet *packet, size_t size)
 {
     packet->header.csum = htons(get_csum(packet, size));
@@ -65,14 +47,50 @@ void au_stream_socket::packet_send(au_packet *packet, size_t size)
     throw "packet_send failed";
 }
 
+void au_stream_socket::packet_recv(ip_packet *packet)
+{
+    while (true) {
+        int res = ::recvfrom(this->sockfd, (void *)packet, sizeof(*packet), 0, &this->remote_addr, &this->addrlen);
+        if (res == EAGAIN)
+            continue;
+        if (res < 0) {
+            print_errno();
+            throw "Could not recv ACK";
+        }
+        if (this->good_packet(packet))
+            break;
+    }
+}
+
+bool au_stream_socket::good_packet(ip_packet *packet)
+{
+    size_t len = packet->header.tot_len - sizeof(packet->header);
+    uint16_t csum = ntohs(packet->au_data.header.csum);
+    packet->au_data.header.csum = 0;
+    if (get_csum((void *)&packet->au_data, len) != csum)
+        return false;
+    if (packet->au_data.header.dest_port != htons(this->port)) {
+        return false;
+    }
+    if (packet->au_data.header.source_port != htons(this->remote_port)) {
+        return false;
+    }
+    if (packet->header.saddr != (*(struct sockaddr_in *)&this->remote_addr).sin_addr.s_addr) {
+        return false;
+    }
+    return true;
+}
+
 au_stream_socket::~au_stream_socket()
 {
 }
 
 // ==========
 
-au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t server_port): hostname(hostname), server_port(server_port)
+au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t server_port): hostname(hostname)
 {
+    this->remote_port = server_port;
+
     this->sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_AU);
     if (this->sockfd < 0) {
         print_errno();
@@ -85,7 +103,7 @@ void au_stream_client_socket::connect()
     if (this->connected)
         return;
 
-    this->client_port = 123; // TODO
+    this->port = 123; // TODO
 
     struct addrinfo hints;
     bzero(&hints, sizeof(struct addrinfo));
@@ -106,7 +124,8 @@ void au_stream_client_socket::connect()
     }
 
     // TODO for now we just take first option
-    this->init_remote_addr(*res->ai_addr);
+    this->remote_addr = *res->ai_addr;
+    this->addrlen = sizeof remote_addr;
 
     freeaddrinfo(res);
 
@@ -123,8 +142,8 @@ void au_stream_client_socket::connect()
 void au_stream_client_socket::send_syn()
 {
     au_packet syn_packet = {0};
-    syn_packet.header.source_port = htons(this->client_port);
-    syn_packet.header.dest_port = htons(this->server_port);
+    syn_packet.header.source_port = htons(this->port);
+    syn_packet.header.dest_port = htons(this->remote_port);
     syn_packet.header.seq_num = htonl(this->send_buff->get_seq_num());
     syn_packet.header.flags = AU_PACKET_SYN;
 
@@ -143,15 +162,8 @@ void au_stream_client_socket::wait_syn_ack()
     ip_packet recved_packet;
 
     while (true) {
-        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, &this->remote_addr, &addrlen);
-        if (res == EAGAIN)
-            continue;
-        if (res < 0) {
-            print_errno();
-            throw "Could not recv to SYN-ACK packet";
-        }
-        if (good_packet(&recved_packet, this->client_port)
-                && (recved_packet.au_data.header.flags & AU_PACKET_SYN)
+        this->packet_recv(&recved_packet);
+        if ((recved_packet.au_data.header.flags & AU_PACKET_SYN)
                 && (recved_packet.au_data.header.flags & AU_PACKET_ACK))
             break;
     }
@@ -168,8 +180,8 @@ void au_stream_client_socket::wait_syn_ack()
 void au_stream_client_socket::send_ack()
 {
     au_packet ack_packet = {0};
-    ack_packet.header.source_port = htons(this->client_port);
-    ack_packet.header.dest_port = htons(this->server_port);
+    ack_packet.header.source_port = htons(this->port);
+    ack_packet.header.dest_port = htons(this->remote_port);
     ack_packet.header.ack_num = htonl(this->recv_buff->get_seq_num());
     ack_packet.header.flags = AU_PACKET_ACK;
 
@@ -221,7 +233,6 @@ au_stream_server_socket::au_stream_server_socket(const char *hostname, port_t po
     for (rp = res; rp != NULL; rp = rp->ai_next) {
         if (bind(this->sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             binded = true;
-            this->init_self_addr(*rp->ai_addr);
             break;
         } else
             warn_op_fail("bind", rp);
@@ -240,7 +251,6 @@ au_stream_server_socket::au_stream_server_socket(const char *hostname, port_t po
 stream_socket* au_stream_server_socket::accept_one_client()
 {
     ip_packet recved_packet;
-    socklen_t addrlen = sizeof(this->self_addr);
 
     // 1. receive syn packet
 
@@ -252,7 +262,7 @@ stream_socket* au_stream_server_socket::accept_one_client()
             print_errno();
             throw "Could not recv SYN";
         }
-        if (good_packet(&recved_packet, this->port)
+        if (this->good_packet(&recved_packet)
                 && (recved_packet.au_data.header.flags & AU_PACKET_SYN))
             break;
     }
@@ -281,15 +291,8 @@ stream_socket* au_stream_server_socket::accept_one_client()
     // 3. wait for ack packet
 
     while (true) {
-        int res = ::recvfrom(this->sockfd, (void *)&recved_packet, sizeof(recved_packet), 0, &new_connection->remote_addr, &new_connection->addrlen);
-        if (res == EAGAIN)
-            continue;
-        if (res < 0) {
-            print_errno();
-            throw "Could not recv ACK";
-        }
-        if (good_packet(&recved_packet, this->port)
-                && (recved_packet.au_data.header.flags & AU_PACKET_ACK))
+        new_connection->packet_recv(&recved_packet);
+        if (recved_packet.au_data.header.flags & AU_PACKET_ACK)
             break;
     }
 
@@ -321,14 +324,23 @@ au_stream_socket* au_stream_server_socket::create_new_connection(ip_packet *recv
     pr_info("Server received SYN packet from %s:%d\n", inet_ntoa(peer_addr.sin_addr), ntohs(peer_addr.sin_port));
 
     au_stream_socket *new_connection = new au_stream_socket(new_sockfd, *((struct sockaddr *)&peer_addr));
+    new_connection->port = this->port;
+    new_connection->remote_port = ntohs(peer_addr.sin_port);
     new_connection->recv_buff->init_seq_num(ntohl(recved_packet->au_data.header.seq_num) + 1);
 
     return new_connection;
 }
 
-void au_stream_server_socket::init_self_addr(struct sockaddr addr)
+bool au_stream_server_socket::good_packet(ip_packet *packet)
 {
-    this->self_addr = addr;
+    size_t len = packet->header.tot_len - sizeof(packet->header);
+    uint16_t csum = ntohs(packet->au_data.header.csum);
+    packet->au_data.header.csum = 0;
+    if (get_csum((void *)&packet->au_data, len) != csum)
+        return false;
+    if (packet->au_data.header.dest_port != htons(this->port))
+        return false;
+    return true;
 }
 
 au_stream_server_socket::~au_stream_server_socket()
