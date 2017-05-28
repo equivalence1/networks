@@ -6,10 +6,18 @@
 
 #include <stdint.h>
 #include <netinet/ip.h>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <ctime>
 
 #define AU_PACKET_SYN (1 << 0)
 #define AU_PACKET_ACK (1 << 1)
 #define AU_PACKET_FIN (1 << 2)
+
+#define AU_SOCKET_STATE_UNINIT       0
+#define AU_SOCKET_STATE_ESTABLISHED  1
+#define AU_SOCKET_STATE_CLOSED       2
 
 struct au_packet_header {
     uint16_t source_port;
@@ -48,14 +56,49 @@ public:
     void init_remote_addr(struct sockaddr remote_addr);
 protected:
     bool good_packet(ip_packet *packet);
+
+    void sender_fun();
+    void receiver_fun();
+private:
+    bool need_resend();
+    void send_one_packet();
+    void recved_ack(au_packet *packet);
+    void recved_data(ip_packet *packet);
+    void send_ack();
+
 public:
+/*
+ * Извиняюсь за коммент на русском, но я бы убился это писать по-английски,
+ * а с моим корявым знанием его, вы бы ещё и не поняли ничего.
+ *
+ * В общем, я долго думал, как избежать использования доп. потоков для каждого
+ * сокета, но так ничего не придумал. Проблема в том, что когда мы делаем
+ * send, кто-то нам должен послать ACK, даже если чувак на другой стороне не
+ * делает recv. Отсюда берется receiver. Аналогично, пакеты могут теряться и т.д.
+ * и если мы не хотим за 2 RTT отсылать 1 пакет (т.е. всегда в send'e на каждый 
+ * пакет дожидаться ACK'a), то нам нужен кто-то, кто на заднем плане будет перепосылать
+ * пакеты, которые не получили ACK'a. Отсюда берется sender. mutex берется для их
+ * синхронизации друг с другом и main потоком. state тоже понадобился для их конроля.
+ */
+    std::thread *receiver;
+    std::thread *sender;
+    std::mutex lock;
+    
+    
+    std::atomic<int> state;
+
+
     send_buffer *send_buff;
     recv_buffer *recv_buff;
 
+
+    std::clock_t last_ack;
+    int same_ack;
+
+
+    int sockfd;
     struct sockaddr remote_addr;
     socklen_t addrlen;
-    int sockfd;
-
     port_t remote_port;
     port_t port;
 };
@@ -71,7 +114,6 @@ private:
     void send_ack();
 
     const char *hostname;
-    bool connected;
 };
 
 struct au_stream_server_socket: public stream_server_socket

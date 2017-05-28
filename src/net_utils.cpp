@@ -10,24 +10,81 @@ send_buffer::send_buffer(size_t size)
     buff = malloc(size);
     if (buff == NULL)
         throw "No mem";
-    l = r = 0;
+    ack = seq = end = 0;
     this->size = size;
 }
 
-void send_buffer::init_seq_num(size_t new_seq)
+size_t send_buffer::write(const void *src, size_t size)
 {
-    l = new_seq;
-    r = new_seq;
+    std::lock_guard<std::mutex> lock{this->lock};
+
+    int to_write = std::min(size, this->size - (end - ack));
+    for (int i = 0; i < to_write; i++) {
+        ((char *)buff)[(end + i) % this->size] = ((char *)src)[i];
+    }
+    end = end + to_write;
+
+    return to_write;
 }
 
-size_t send_buffer::get_seq_num()
+size_t send_buffer::copy(void *dst, size_t size)
 {
-    return l;
+    std::lock_guard<std::mutex> lock{this->lock};
+
+    int to_copy = std::min(size, (end - seq) % this->size);
+    for (int i = 0; i < to_copy; i++) {
+        ((char *)dst)[i] = ((char *)buff)[(seq + i) % this->size];
+    }
+    seq = seq + to_copy;
+
+    return to_copy;
+}
+
+size_t send_buffer::get_ack()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->ack;
+}
+
+size_t send_buffer::get_seq()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->seq;
+}
+
+void send_buffer::move_ack(size_t new_ack)
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    this->ack = new_ack;
+}
+
+void send_buffer::init_ack(size_t ack)
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    this->ack = this->seq = this->end = ack;
+}
+
+void send_buffer::need_resend()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    this->seq = this->ack;
+}
+
+bool send_buffer::has_to_send()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->end > this->seq;
+}
+
+bool send_buffer::has_unapproved()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->seq > this->ack;
 }
 
 send_buffer::~send_buffer()
 {
-    free(buff);
+    free(this->buff);
 }
 
 // recv_buffer
@@ -37,58 +94,51 @@ recv_buffer::recv_buffer(size_t size)
     buff = malloc(size);
     if (buff == NULL)
         throw "No mem";
-    l = r = 0;
+    begin = seq = 0;
     this->size = size;
 }
 
-size_t recv_buffer::filled_size()
+size_t recv_buffer::write(const void *src, size_t size)
 {
-    return r - l;
-}
+    std::lock_guard<std::mutex> lock{this->lock};
 
-bool recv_buffer::is_full()
-{
-    return this->filled_size() == size;
-}
-
-size_t recv_buffer::write(void *src, size_t size)
-{
-    int to_write = std::min(size, this->size - (r - l));
-
+    int to_write = std::min(size, this->size - (seq - begin));
     for (int i = 0; i < to_write; i++) {
-        ((char *)buff)[(r + i) % this->size] = ((char *)src)[i];
+        ((char *)buff)[(seq + i) % this->size] = ((char *)src)[i];
     }
-    r = (r + to_write) % this->size;
+    seq = seq + to_write;
 
     return to_write;
 }
 
 size_t recv_buffer::copy(void *dst, size_t size)
 {
-    int to_copy = std::min(size, (r - l) % this->size);
+    std::lock_guard<std::mutex> lock{this->lock};
 
+    int to_copy = std::min(size, (seq - begin) % this->size);
     for (int i = 0; i < to_copy; i++) {
-        ((char *)dst)[i] = ((char *)buff)[(l + i) % this->size];
+        ((char *)dst)[i] = ((char *)buff)[(begin + i) % this->size];
     }
-    l = (l + to_copy) % this->size; // TODO should not change l here
+    begin = begin + to_copy; // TODO should not change l here
 
     return to_copy;
 }
 
-void recv_buffer::init_seq_num(size_t new_seq)
+void recv_buffer::init_seq(size_t seq)
 {
-    r = new_seq;
-    l = new_seq;
+    std::lock_guard<std::mutex> lock{this->lock};
+    this->begin = this->seq = seq;
 }
 
-size_t recv_buffer::get_seq_num()
+size_t recv_buffer::get_seq()
 {
-    return r;
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->seq;
 }
 
 recv_buffer::~recv_buffer()
 {
-    free(buff);
+    free(this->buff);
 }
 
 
