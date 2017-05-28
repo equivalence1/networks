@@ -94,6 +94,7 @@ public:
 
     std::clock_t last_ack;
     int same_ack;
+    int sent_without_ack;
 
 
     int sockfd;

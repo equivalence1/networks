@@ -72,6 +72,7 @@ void send_and_recv(struct stream_socket *sock, void *buff, int len)
 static
 void* backgroud_op(void *data)
 {
+printf("entered thread\n");
     try {
         op_data_wrapper *op_data = (op_data_wrapper *)data;
 printf(":::: connecting\n");
@@ -135,8 +136,10 @@ printf("blocking\n");
         } else {
             pr_info("%s\n", "using AU socket\n");
             new_connection = new au_stream_client_socket(host, port);
+printf("connection created\n");
         }
         op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
+printf("creating thread\n");
         if (pthread_create(&thread, NULL, backgroud_op, odw) < 0)
             pr_warn("%s\n", "Could not start thread for background operation");
     }

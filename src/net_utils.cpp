@@ -31,7 +31,7 @@ size_t send_buffer::copy(void *dst, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->lock};
 
-    int to_copy = std::min(size, (end - seq) % this->size);
+    int to_copy = std::min(size, end - seq);
     for (int i = 0; i < to_copy; i++) {
         ((char *)dst)[i] = ((char *)buff)[(seq + i) % this->size];
     }
@@ -115,11 +115,11 @@ size_t recv_buffer::copy(void *dst, size_t size)
 {
     std::lock_guard<std::mutex> lock{this->lock};
 
-    int to_copy = std::min(size, (seq - begin) % this->size);
+    int to_copy = std::min(size, seq - begin);
     for (int i = 0; i < to_copy; i++) {
         ((char *)dst)[i] = ((char *)buff)[(begin + i) % this->size];
     }
-    begin = begin + to_copy; // TODO should not change l here
+    begin = begin + to_copy;
 
     return to_copy;
 }

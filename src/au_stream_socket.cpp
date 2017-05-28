@@ -91,8 +91,6 @@ void au_stream_socket::packet_recv(ip_packet *packet)
     while (true) {
         // since it's not packet sockets, recvfrom either recves full ip packet or fails (see man 7 raw)
         int res = ::recvfrom(this->sockfd, (void *)packet, sizeof(*packet), 0, &this->remote_addr, &this->addrlen);
-        if ((res == EAGAIN) || (res == EWOULDBLOCK) || (res == EINPROGRESS))
-            continue;
         if (res < 0) {
             print_errno();
             throw "Could not recv packet";
@@ -131,19 +129,22 @@ void au_stream_socket::sender_fun()
     while (state.load() != AU_SOCKET_STATE_ESTABLISHED)
         std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep for 0.5 sec
 
+    // setup last_ack to current time since we have't sent anything yet
+    this->last_ack = std::clock();
+    this->same_ack = 1;
+
     while (state.load() == AU_SOCKET_STATE_ESTABLISHED) {
         try {
             // check if we got all acks
             if (this->need_resend()) {
 printf("need resend\n");
                 this->send_buff->need_resend();
+                this->last_ack = std::clock();
+                this->same_ack = 0;
             }
 
-            // ok, send up to 5 packets w/o waiting for ACKs
-            for (int i = 0; i < 5; i++) {
-                if (this->send_buff->has_to_send())
-                    this->send_one_packet();
-            }
+            if (this->send_buff->has_to_send()) // TODO check number of packets sent
+                this->send_one_packet();
         } catch (...) {
             handle_eptr(std::current_exception());
             return;
@@ -165,13 +166,20 @@ void au_stream_socket::send_one_packet()
     packet.header.source_port = htons(this->port);
     packet.header.dest_port = htons(this->remote_port);
 
+    // reset timeout all sent data is already approved
+    if (!this->send_buff->has_unapproved()) {
+printf("reseting timeout\n");
+        this->lock.lock();
+        this->last_ack = std::clock();
+        this->lock.unlock();
+    }
+
     size_t copied = this->send_buff->copy(packet.data, sizeof(packet.data));
 printf("copied to send %d\n", copied);
     if (copied == 0)
         return;
 
     packet.header.seq_num = htonl(this->send_buff->get_seq());
-
 printf("one packet send\n");
     this->packet_send(&packet, sizeof(au_packet_header) + copied);
 }
@@ -231,7 +239,7 @@ printf("it is bad ACK :(\n");
 void au_stream_socket::recved_data(ip_packet *packet)
 {
 printf("data size %d\n", get_data_len(packet));
-    if (ntohl(packet->au_data.header.seq_num) < this->recv_buff->get_seq()) {
+    if (ntohl(packet->au_data.header.seq_num) <= this->recv_buff->get_seq()) {
 printf("this data was already received\n");
         // seems like sender tries to retransmit us some packet
         // noop
@@ -263,6 +271,10 @@ au_stream_socket::~au_stream_socket()
     delete this->send_buff;
     delete this->recv_buff;
 
+    this->state = AU_SOCKET_STATE_CLOSED;
+    this->sender->join();
+    this->receiver->join();
+
     if (this->sockfd > 0)
         close(this->sockfd);
 }
@@ -271,6 +283,7 @@ au_stream_socket::~au_stream_socket()
 
 au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t server_port): hostname(hostname)
 {
+printf("hi\n");
     this->remote_port = server_port;
 
     this->sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_AU);

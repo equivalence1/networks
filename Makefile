@@ -18,7 +18,7 @@ test_objects = $(test_sources:.cpp=.o_64)
 
 all: $(bindir) $(objdir) client32 client64 server test
 
-debug: CXXFLAGS += -DDEBUG
+debug: CXXFLAGS += -DDEBUG -g
 debug: all
 
 $(bindir):
