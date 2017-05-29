@@ -42,8 +42,8 @@ au_stream_socket::au_stream_socket()
 {
     this->sockfd = 0;
 
-    this->send_buff = new send_buffer(4000);
-    this->recv_buff = new recv_buffer(4000);
+    this->send_buff = new send_buffer(BUFFER_SIZE);
+    this->recv_buff = new recv_buffer(BUFFER_SIZE);
 
     state = AU_SOCKET_STATE_UNINIT;
 
@@ -97,8 +97,12 @@ void au_stream_socket::send(const void *buff, size_t size)
         int sent = this->send_buff->write((char *)buff + total_sent, size - total_sent);
         total_sent += sent;
         if (sent == 0) {
-            // no space in buffer. Sleep for 0.01 sec and give sender chance to send something
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // no space in buffer. Sleep for 0.5 sec and give sender chance to send something
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        } else {
+            // notify sender that buffer is not empty anymore
+            std::unique_lock<std::mutex> lck(this->lock);
+            this->sync.notify_one();
         }
     }
 
@@ -122,7 +126,7 @@ void au_stream_socket::recv(void *buff, size_t size)
             if (state.load() == AU_SOCKET_STATE_CLOSED)
                 throw "Connection is closed";
             // buffer is empty. Sleep a little bit so maybe something will be received
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 0.01 sec
+            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 0.5 sec
         }
     }
 }
@@ -214,8 +218,13 @@ void au_stream_socket::sender_fun()
                 this->lock.unlock();
             }
 
-            if (this->send_buff->has_to_send()) // TODO check number of packets sent
+            if (this->send_buff->has_to_send())
                 this->send_from_buff();
+            else {
+                // nothing to send -- wait for 3 secs
+                std::unique_lock<std::mutex> lck(this->lock);
+                this->sync.wait_for(lck, std::chrono::seconds(3));
+            }
         } catch (...) {
             handle_eptr(std::current_exception());
             return;
