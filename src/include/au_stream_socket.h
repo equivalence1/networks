@@ -10,14 +10,36 @@
 #include <mutex>
 #include <atomic>
 #include <ctime>
+#include <condition_variable>
+#include <chrono>
 
-#define AU_PACKET_SYN (1 << 0)
-#define AU_PACKET_ACK (1 << 1)
-#define AU_PACKET_FIN (1 << 2)
+#define AU_PACKET_SYN         (1 << 0)
+#define AU_PACKET_ACK         (1 << 1)
+#define AU_PACKET_FIN         (1 << 2)
+// this flag tells that this packet is acking FIN packet.
+// it's just easier to impliment connection closing with it.
+#define AU_PACKET_FIN_ACK     (1 << 3)
+#define AU_PACKET_DUDE_ARE_U_EVEN_ALIVE (1 << 4)
+#define AU_PACKET_YEAH_DUDE_IM_FINE (1 << 5)
 
 #define AU_SOCKET_STATE_UNINIT       0
 #define AU_SOCKET_STATE_ESTABLISHED  1
-#define AU_SOCKET_STATE_CLOSED       2
+// see diagram here: http://www.tcpipguide.com/free/t_TCPConnectionTermination-2.htm
+#define AU_SOCKET_STATE_FIN          2
+#define AU_SOCKET_STATE_FIN_WAIT_1   3
+#define AU_SOCKET_STATE_FIN_WAIT_2   4
+#define AU_SOCKET_STATE_TIME_WAIT    5
+#define AU_SOCKET_STATE_CLOSE_WAIT   6
+#define AU_SOCKET_STATE_LAST_ACK     7
+#define AU_SOCKET_STATE_CLOSED       8
+
+/*
+ * enhancements:
+ * 1. Cumulative ACK
+ * 2. Fast retransmit (if I understood it correctly, then it's just retransmitting when we have 3 equal ACKs)
+ */
+
+typedef port_t au_stream_port; // this is only for compatibility with provided test
 
 struct au_packet_header {
     uint16_t source_port;
@@ -50,22 +72,26 @@ public:
     void recv(void *buff, size_t size);
     virtual ~au_stream_socket();
 
-    void packet_send(au_packet *packet, size_t size); // directly sends packet
-    void packet_recv(ip_packet *packet); // directly recvs packet
+    bool packet_send(au_packet *packet, size_t size); // directly sends packet
+    bool packet_recv(ip_packet *packet); // directly recvs packet
+
+    void send_special_packet(uint8_t flags);
 
     void init_remote_addr(struct sockaddr remote_addr);
 protected:
     bool good_packet(ip_packet *packet);
 
+    void set_nonblock();
+
     void sender_fun();
     void receiver_fun();
 private:
     bool need_resend();
-    void send_one_packet();
+    void send_from_buff();
     void recved_ack(au_packet *packet);
     void recved_data(ip_packet *packet);
     void send_ack();
-
+    void check_alive();
 public:
 /*
  * Извиняюсь за коммент на русском, но я бы убился это писать по-английски,
@@ -83,8 +109,9 @@ public:
     std::thread *receiver;
     std::thread *sender;
     std::mutex lock;
-    
-    
+    std::condition_variable sync;
+
+
     std::atomic<int> state;
 
 
@@ -92,22 +119,32 @@ public:
     recv_buffer *recv_buff;
 
 
-    std::clock_t last_ack;
+    std::chrono::time_point<std::chrono::system_clock> last_activity;
+    std::chrono::time_point<std::chrono::system_clock> last_ack;
     int same_ack;
-    int sent_without_ack;
 
 
-    int sockfd;
+    volatile int sockfd;
     struct sockaddr remote_addr;
     socklen_t addrlen;
     port_t remote_port;
     port_t port;
+
+
+    static const size_t BUFFER_SIZE = 4000;
+    static constexpr double RECV_TIMEOUT_SEC = 5;
+    static constexpr double SINGLE_RECV_TIMEOUT_SEC = 0.5;
+    static constexpr double SEND_TIMEOUT_SEC = 5;
+    static constexpr double SINGLE_SEND_TIMEOUT_SEC = 0.5;
+    static constexpr double FAST_RETRANSMIT_TIMEOUT_SEC = 15;
+    static constexpr double KEEP_ALIVE_TIMEOUT_SEC = 30;
+    static constexpr double ABORT_CONNECTION_TIMEOUT = 3 * KEEP_ALIVE_TIMEOUT_SEC;
 };
 
 struct au_stream_client_socket: public au_stream_socket, public stream_client_socket
 {
 public:
-    au_stream_client_socket(const char *hostname, port_t port);
+    au_stream_client_socket(const char *hostname, port_t client_port, port_t server_port);
     virtual void connect();
 private:
     void send_syn();

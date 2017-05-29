@@ -35,6 +35,7 @@ public:
     void  move_ack(size_t new_ack);
     void init_ack(size_t ack);
     size_t get_seq();
+    size_t get_end();
     void need_resend();
     bool has_to_send();
     bool has_unapproved();

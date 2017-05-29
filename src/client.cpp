@@ -15,6 +15,8 @@ static const char *host = "localhost";
 static uint16_t port = 40001;
 static struct stream_client_socket *sock;
 
+static uint16_t client_port = 123;
+
 /* we only need this class to wrap all data needed
  * to send/recv in background job and pass it as
  * (void *arg) in pthread_create
@@ -72,12 +74,9 @@ void send_and_recv(struct stream_socket *sock, void *buff, int len)
 static
 void* backgroud_op(void *data)
 {
-printf("entered thread\n");
     try {
         op_data_wrapper *op_data = (op_data_wrapper *)data;
-printf(":::: connecting\n");
         op_data->get_sock()->connect();
-printf(":::: sending\n");
         send_and_recv(op_data->get_sock(), op_data->get_buff(), op_data->get_len());
         delete op_data;
     } catch (...) {
@@ -107,11 +106,9 @@ void handle(const std::string &user_input)
     }
 
     if (is_blocking(buff)) {
-printf("not blocking\n");
         send_and_recv(sock, buff, len);
         free(buff);
     } else {
-printf("blocking\n");
         // we create it on stack cuz we don't need it afterwards, we wont join new thread
         pthread_t thread;
         /* 
@@ -130,16 +127,11 @@ printf("blocking\n");
          * in background, but we can't specify NO_WAIT flag in our recv.
          */
         stream_client_socket *new_connection;
-        if (is_tcp()) {
-            pr_info("%s\n", "using TCP socket\n");
+        if (is_tcp())
             new_connection = new tcp_client_socket(host, port);
-        } else {
-            pr_info("%s\n", "using AU socket\n");
-            new_connection = new au_stream_client_socket(host, port);
-printf("connection created\n");
-        }
+        else
+            new_connection = new au_stream_client_socket(host, client_port++, port);
         op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
-printf("creating thread\n");
         if (pthread_create(&thread, NULL, backgroud_op, odw) < 0)
             pr_warn("%s\n", "Could not start thread for background operation");
     }
@@ -158,7 +150,7 @@ int main(int argc, char *argv[])
             sock = new tcp_client_socket(host, port);
         } else {
             pr_info("%s\n", "using AU sockets");
-            sock = new au_stream_client_socket(host, port);
+            sock = new au_stream_client_socket(host, client_port++, port);
         }
         sock->connect();
 
@@ -167,6 +159,10 @@ int main(int argc, char *argv[])
             getline(std::cin, user_input);
             if (user_input == "")
                 continue;
+            if (user_input == "exit") {
+                delete sock;
+                break;
+            }
             handle(user_input);
         }
     } catch (...) {

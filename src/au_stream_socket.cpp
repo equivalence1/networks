@@ -11,8 +11,27 @@
 #include <strings.h>
 #include <netinet/tcp.h>
 #include <string.h>
+#include <cassert>
+#include <ctime>
+#include <errno.h>
+#include <chrono>
 
 #define IPPROTO_AU 200
+
+#define FORM_PACKET(packet, src_port, dst_port, flgs) \
+    do { \
+        packet = {0}; \
+        packet.header.source_port = htons(src_port); \
+        packet.header.dest_port = htons(dst_port); \
+        packet.header.flags = (flgs); \
+    } while (0);
+
+static double inline get_time_sec_since(std::chrono::time_point<std::chrono::system_clock> start)
+{
+    std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = now - start;
+    return elapsed_seconds.count();
+}
 
 static size_t get_data_len(ip_packet *packet)
 {
@@ -37,13 +56,42 @@ au_stream_socket::au_stream_socket(int sockfd, struct sockaddr remote_addr): au_
     this->sockfd = sockfd;
     this->remote_addr = remote_addr;
     this->addrlen = sizeof remote_addr;
+    this->set_nonblock();
+}
+
+void au_stream_socket::set_nonblock()
+{
+	/*
+	 * We need to set recv timeout because without it we wont 
+	 * leave recvfrom function even after FIN packets, so connection
+     * will never really close.
+ 	 *
+	 * Also we set send timeout. We need this because if other end
+     * is unreachable we want to try sending for some timeout.
+     */
+
+    struct timeval recv_timeout = {0};
+    recv_timeout.tv_usec = (int)(au_stream_socket::SINGLE_RECV_TIMEOUT_SEC * 1e6);
+
+    if (setsockopt(this->sockfd, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout))) {
+		print_errno();
+		pr_warn("%s\n", "Could not set SO_RCVTIMEO socket option");
+    }
+
+    struct timeval send_timeout = {0};
+    send_timeout.tv_usec = (int)(au_stream_socket::SINGLE_RECV_TIMEOUT_SEC * 1e6);
+
+    if (setsockopt(this->sockfd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout))) {
+		print_errno();
+		pr_warn("%s\n", "Could not set SO_SNDTIMEO socket option");
+    }
 }
 
 void au_stream_socket::send(const void *buff, size_t size)
 {
     if (state.load() != AU_SOCKET_STATE_ESTABLISHED)
         throw "Socket is not connected";
-printf("enter send\n");
+
     size_t total_sent = 0;
     while (total_sent < size) {
         int sent = this->send_buff->write((char *)buff + total_sent, size - total_sent);
@@ -53,51 +101,79 @@ printf("enter send\n");
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
-printf("leave send\n");
+
+    size_t end = this->send_buff->get_end();
+
+    // wait for ack to come
+    while (end > this->send_buff->get_ack())
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
 void au_stream_socket::recv(void *buff, size_t size)
 {
-    if (state.load() != AU_SOCKET_STATE_ESTABLISHED)
+    if (state.load() == AU_SOCKET_STATE_UNINIT)
         throw "Socket is not connected";
-printf("enter recv\n");
+
     size_t total_received = 0;
     while (total_received < size) {
         int received = this->recv_buff->copy((char *)buff + total_received, size - total_received);
         total_received += received;
         if (received == 0) {
+            if (state.load() == AU_SOCKET_STATE_CLOSED)
+                throw "Connection is closed";
             // buffer is empty. Sleep a little bit so maybe something will be received
             std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 0.01 sec
         }
     }
-printf("leave recv\n");
 }
 
-void au_stream_socket::packet_send(au_packet *packet, size_t size)
+bool au_stream_socket::packet_send(au_packet *packet, size_t size)
 {
     std::lock_guard<std::mutex> lockg{this->lock};
 
     packet->header.csum = htons(get_csum(packet, size));
-    for (int try_n = 0; try_n < 10; try_n++) {
-        if (::sendto(this->sockfd, (void *)packet, size, 0, &this->remote_addr, this->addrlen) == (int)size)
-            return;
+
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    while (get_time_sec_since(start) < au_stream_socket::SEND_TIMEOUT_SEC) {
+        int res = ::sendto(this->sockfd, (void *)packet, size, 0, &this->remote_addr, this->addrlen);
+        if (res == (int)size)
+            return true;
+        if (res == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS))
+            continue;
+        if (res < 0 ) {
+            print_errno();
+            throw "Could not send packet";
+        }
     }
 
-    throw "packet_send failed";
+    return false;
 }
 
-void au_stream_socket::packet_recv(ip_packet *packet)
+void au_stream_socket::send_special_packet(uint8_t flags)
 {
-    while (true) {
+    au_packet packet;
+    FORM_PACKET(packet, this->port, this->remote_port, flags);
+    if (!this->packet_send(&packet, sizeof(au_packet_header)))
+       pr_warn("%d: Failed to send special packet with flag %d\n", this->port, flags);
+}
+
+bool au_stream_socket::packet_recv(ip_packet *packet)
+{
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    while (get_time_sec_since(start) < au_stream_socket::RECV_TIMEOUT_SEC) {
         // since it's not packet sockets, recvfrom either recves full ip packet or fails (see man 7 raw)
         int res = ::recvfrom(this->sockfd, (void *)packet, sizeof(*packet), 0, &this->remote_addr, &this->addrlen);
-        if (res < 0) {
+        if (res == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS))
+            continue;
+        if (res < 0 ) {
             print_errno();
             throw "Could not recv packet";
         }
         if (this->good_packet(packet))
-            break;
+            return true;
     }
+
+    return false;
 }
 
 bool au_stream_socket::good_packet(ip_packet *packet)
@@ -105,22 +181,14 @@ bool au_stream_socket::good_packet(ip_packet *packet)
     size_t len = ntohs(packet->header.tot_len) - sizeof(packet->header);
     uint16_t csum = ntohs(packet->au_data.header.csum);
     packet->au_data.header.csum = 0;
-    if (get_csum((void *)&packet->au_data, len) != csum) {
-printf("csum failed\n");
+    if (get_csum((void *)&packet->au_data, len) != csum)
         return false;
-    }
-    if (packet->au_data.header.dest_port != htons(this->port)) {
-printf("dest port failed\n");
+    if (packet->au_data.header.dest_port != htons(this->port))
         return false;
-    }
-    if (packet->au_data.header.source_port != htons(this->remote_port)) {
-printf("src port failed\n");
+    if (packet->au_data.header.source_port != htons(this->remote_port))
         return false;
-    }
-    if (packet->header.saddr != (*(struct sockaddr_in *)&this->remote_addr).sin_addr.s_addr) {
-printf("ip failed\n");
+    if (packet->header.saddr != (*(struct sockaddr_in *)&this->remote_addr).sin_addr.s_addr)
         return false;
-    }
     return true;
 }
 
@@ -130,37 +198,81 @@ void au_stream_socket::sender_fun()
         std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep for 0.5 sec
 
     // setup last_ack to current time since we have't sent anything yet
-    this->last_ack = std::clock();
+    this->lock.lock();
+    this->last_ack = std::chrono::system_clock::now();
     this->same_ack = 1;
+    this->lock.unlock();
 
     while (state.load() == AU_SOCKET_STATE_ESTABLISHED) {
         try {
             // check if we got all acks
             if (this->need_resend()) {
-printf("need resend\n");
                 this->send_buff->need_resend();
-                this->last_ack = std::clock();
+                this->lock.lock();
+                this->last_ack = std::chrono::system_clock::now();
                 this->same_ack = 0;
+                this->lock.unlock();
             }
 
             if (this->send_buff->has_to_send()) // TODO check number of packets sent
-                this->send_one_packet();
+                this->send_from_buff();
         } catch (...) {
             handle_eptr(std::current_exception());
             return;
         }
     }
+
+// We are initiator of closing
+    if (state.load() == AU_SOCKET_STATE_FIN) {
+        // client is closing connection -- send FIN to server
+        state = AU_SOCKET_STATE_FIN_WAIT_1;
+        this->send_special_packet(AU_PACKET_FIN);
+
+        // wait for FIN from server
+        while (state.load() != AU_SOCKET_STATE_TIME_WAIT)
+            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep for 0.5 sec
+
+        // we received FIN from server. Send him our ACK
+        this->send_special_packet(AU_PACKET_FIN_ACK);
+
+        // wait for some time
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        // now we can really close the connection
+        state = AU_SOCKET_STATE_CLOSED;
+        return;
+    }
+
+// We are not
+
+    if (state.load() == AU_SOCKET_STATE_CLOSE_WAIT) {
+        // we received FIN packet -- send FIN-ACK in return
+        this->send_special_packet(AU_PACKET_FIN_ACK);
+
+        // now send our FIN packet
+        state = AU_SOCKET_STATE_LAST_ACK;
+        this->send_special_packet(AU_PACKET_FIN);
+
+        while (state.load() != AU_SOCKET_STATE_CLOSED)
+            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep for 0.5 sec
+
+        return;
+    }
+
+// Wtf?
+    assert(false);
 }
 
 bool au_stream_socket::need_resend()
 {
     std::lock_guard<std::mutex> lockg{this->lock};
 
-    double since_last_ack = (std::clock() - this->last_ack) / (double)CLOCKS_PER_SEC;
+    double since_last_ack = get_time_sec_since(this->last_ack);
     return ((since_last_ack > 5 && this->send_buff->has_unapproved()) || same_ack >= 3);
 }
 
-void au_stream_socket::send_one_packet()
+// sends one packet from send_buff
+void au_stream_socket::send_from_buff()
 {
     au_packet packet = {0};
     packet.header.source_port = htons(this->port);
@@ -168,20 +280,18 @@ void au_stream_socket::send_one_packet()
 
     // reset timeout all sent data is already approved
     if (!this->send_buff->has_unapproved()) {
-printf("reseting timeout\n");
         this->lock.lock();
-        this->last_ack = std::clock();
+        this->last_ack = std::chrono::system_clock::now();
         this->lock.unlock();
     }
 
     size_t copied = this->send_buff->copy(packet.data, sizeof(packet.data));
-printf("copied to send %d\n", copied);
     if (copied == 0)
         return;
 
     packet.header.seq_num = htonl(this->send_buff->get_seq());
-printf("one packet send\n");
-    this->packet_send(&packet, sizeof(au_packet_header) + copied);
+    if (!this->packet_send(&packet, sizeof(au_packet_header) + copied))
+        pr_warn("%d: Could not send data from send_buff\n", this->port);
 }
 
 void au_stream_socket::receiver_fun()
@@ -190,24 +300,54 @@ void au_stream_socket::receiver_fun()
         std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep for 0.5 sec
 
     ip_packet packet;
+    this->last_activity = std::chrono::system_clock::now();
 
-    while (state.load() == AU_SOCKET_STATE_ESTABLISHED) {
+    while (state.load() != AU_SOCKET_STATE_CLOSED) {
         try {
-            this->packet_recv(&packet);
+            if (!this->packet_recv(&packet)) {
+                this->check_alive();
+                continue;
+            }
+
+            this->last_activity = std::chrono::system_clock::now();
+
+            if (packet.au_data.header.flags & AU_PACKET_DUDE_ARE_U_EVEN_ALIVE) {
+                this->send_special_packet(AU_PACKET_YEAH_DUDE_IM_FINE);
+                continue;
+            }
+
+            if (packet.au_data.header.flags & AU_PACKET_YEAH_DUDE_IM_FINE)
+                continue;
 
             // check if it's ACK packet and handle it
             if (packet.au_data.header.flags & AU_PACKET_ACK) {
-printf("it's ACK\n");
                 this->recved_ack(&packet.au_data);
                 continue;
             }
 
-            // FIN packet indicates that we are closing connection
             if (packet.au_data.header.flags & AU_PACKET_FIN) {
-                // TODO
-                return;
+                if (state == AU_SOCKET_STATE_ESTABLISHED) {
+                    state = AU_SOCKET_STATE_CLOSE_WAIT;
+                    continue;
+                }
+                if (state == AU_SOCKET_STATE_FIN_WAIT_2) {
+                    state = AU_SOCKET_STATE_TIME_WAIT;
+                    continue;
+                }
+                throw "Bad FIN";
             }
-printf("it's data\n");
+
+            // we received acknowledgement for our fin
+            if (packet.au_data.header.flags & AU_PACKET_FIN_ACK) {
+                if (state.load() == AU_SOCKET_STATE_LAST_ACK)
+                    state = AU_SOCKET_STATE_CLOSED;
+                else if (state.load() == AU_SOCKET_STATE_FIN_WAIT_1)
+                    state = AU_SOCKET_STATE_FIN_WAIT_2;
+                else
+                    throw "ACK-FIN received suddenly";
+                continue;
+            }
+            
             // ok, it's just a regular data
             this->recved_data(&packet);
         } catch (...) {
@@ -217,20 +357,29 @@ printf("it's data\n");
     }
 }
 
+void au_stream_socket::check_alive()
+{
+    if (get_time_sec_since(this->last_activity) > ABORT_CONNECTION_TIMEOUT) {
+        pr_err("%s\n", "Other side does not respond. Aboring connection.");
+        state = AU_SOCKET_STATE_CLOSED;
+        throw "Connection aborted due to timeout";
+    }
+
+    if (get_time_sec_since(this->last_activity) > KEEP_ALIVE_TIMEOUT_SEC) {
+        this->send_special_packet(AU_PACKET_DUDE_ARE_U_EVEN_ALIVE);
+    }
+}
+
 void au_stream_socket::recved_ack(au_packet *packet)
 {
     std::lock_guard<std::mutex> lockg{this->lock};
 
-printf("current ack: %d, received ack %d\n", this->send_buff->get_ack(), ntohl(packet->header.ack_num));
-
-    this->last_ack = std::clock();
+    this->last_ack = std::chrono::system_clock::now();
 
     if (this->send_buff->get_ack() < ntohl(packet->header.ack_num)) {
         this->send_buff->move_ack(ntohl(packet->header.ack_num));
         this->same_ack = 1;
-printf("it is right ACK!\n");
     } else {
-printf("it is bad ACK :(\n");
         // we received same ack
         this->same_ack += 1;
     }
@@ -238,15 +387,25 @@ printf("it is bad ACK :(\n");
 
 void au_stream_socket::recved_data(ip_packet *packet)
 {
-printf("data size %d\n", get_data_len(packet));
     if (ntohl(packet->au_data.header.seq_num) <= this->recv_buff->get_seq()) {
-printf("this data was already received\n");
         // seems like sender tries to retransmit us some packet
         // noop
     } else {
-printf("it's new data!\n");
-        // ok, it's something new
-        this->recv_buff->write(packet->au_data.data, get_data_len(packet));
+        /*
+         * This packet may contain some old data along with new one.
+         * Imagine the situation when sender send some data but did not recv
+         * ACK packet for it during timeout, though receiver sends it. 
+         * Now, right after send does send_buff->need_resend()
+         * some new data arrives in this buffer. So send_buff->end increased which means
+         * we have some new data for receiver. However, when we start to send all this data
+         * our packet will contain old data as well as new one. If we just write it to
+         * recv_buff of receiver, old data would be written twice.
+         *
+         * To prevent it, we calculate how much data we should actually write to the buffer.
+         */
+        size_t size = ntohl(packet->au_data.header.seq_num) - this->recv_buff->get_seq();
+        int offset = (int)get_data_len(packet) - (int)size;
+        this->recv_buff->write(packet->au_data.data + offset, size /*get_data_len(packet)*/);
     }
     this->send_ack();
 }
@@ -255,25 +414,23 @@ void au_stream_socket::send_ack()
 {
     uint32_t ack_num = this->recv_buff->get_seq();
 
-printf("sending ack to %d\n", ack_num);
-
-    au_packet packet = {0};
-    packet.header.source_port = htons(this->port);
-    packet.header.dest_port = htons(this->remote_port);
+    au_packet packet;
+    FORM_PACKET(packet, this->port, this->remote_port, AU_PACKET_ACK);
     packet.header.ack_num = htonl(ack_num);
-    packet.header.flags = AU_PACKET_ACK;
 
-    this->packet_send(&packet, sizeof(au_packet_header));
+    if (!this->packet_send(&packet, sizeof(au_packet_header)))
+        pr_warn("%d: Failed to send ACK", this->port);
 }
 
 au_stream_socket::~au_stream_socket()
 {
-    delete this->send_buff;
-    delete this->recv_buff;
-
-    this->state = AU_SOCKET_STATE_CLOSED;
+    if (this->state.load() == AU_SOCKET_STATE_ESTABLISHED)
+        this->state = AU_SOCKET_STATE_FIN;
     this->sender->join();
     this->receiver->join();
+
+    delete this->send_buff;
+    delete this->recv_buff;
 
     if (this->sockfd > 0)
         close(this->sockfd);
@@ -281,9 +438,10 @@ au_stream_socket::~au_stream_socket()
 
 // ==========
 
-au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t server_port): hostname(hostname)
+// accordint to given test, au_stream_client socket is provided with client port by caller
+au_stream_client_socket::au_stream_client_socket(const char *hostname, port_t client_port, port_t server_port): hostname(hostname)
 {
-printf("hi\n");
+    this->port = client_port;
     this->remote_port = server_port;
 
     this->sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_AU);
@@ -291,16 +449,14 @@ printf("hi\n");
         print_errno();
         throw "Could not create raw socket";
     }
-}
 
-static int glob_port = 100; // TODO
+    this->set_nonblock();
+}
 
 void au_stream_client_socket::connect()
 {
     if (state.load() == AU_SOCKET_STATE_ESTABLISHED)
         return;
-
-    this->port = (glob_port++); // TODO
 
     struct addrinfo hints;
     bzero(&hints, sizeof(struct addrinfo));
@@ -326,6 +482,7 @@ void au_stream_client_socket::connect()
 
     freeaddrinfo(res);
 
+    // try to send syn for some time, server maybe just starting
     this->send_syn();
     this->wait_syn_ack();
     this->send_ack();
@@ -337,19 +494,15 @@ void au_stream_client_socket::connect()
 
 void au_stream_client_socket::send_syn()
 {
-    au_packet syn_packet = {0};
-    syn_packet.header.source_port = htons(this->port);
-    syn_packet.header.dest_port = htons(this->remote_port);
+    au_packet syn_packet;
+    FORM_PACKET(syn_packet, this->port, this->remote_port, AU_PACKET_SYN)
     syn_packet.header.seq_num = htonl(this->send_buff->get_ack());
-    syn_packet.header.flags = AU_PACKET_SYN;
 
     try {
-printf("sending syn\n");
-        this->packet_send(&syn_packet, sizeof(struct au_packet_header));
-printf("sent syn\n");
+        if (!this->packet_send(&syn_packet, sizeof(struct au_packet_header)))
+            throw "..."; // Ye, Im lazy
     } catch (...) {
         handle_eptr(std::current_exception());
-printf("syn failed\n");
         throw "Could not send SYN packet";
     }
 
@@ -373,19 +526,18 @@ void au_stream_client_socket::wait_syn_ack()
         throw "SYN-ACK packet has bad ACK number";
 
     this->recv_buff->init_seq(ntohl(recved_packet.au_data.header.seq_num) + 1);
-    this->send_buff->move_ack(ntohl(recved_packet.au_data.header.ack_num));
+    this->send_buff->init_ack(ntohl(recved_packet.au_data.header.ack_num));
 }
 
 void au_stream_client_socket::send_ack()
 {
-    au_packet ack_packet = {0};
-    ack_packet.header.source_port = htons(this->port);
-    ack_packet.header.dest_port = htons(this->remote_port);
+    au_packet ack_packet;
+    FORM_PACKET(ack_packet, this->port, this->remote_port, AU_PACKET_ACK);
     ack_packet.header.ack_num = htonl(this->recv_buff->get_seq());
-    ack_packet.header.flags = AU_PACKET_ACK;
 
     try {
-        this->packet_send(&ack_packet, sizeof(struct au_packet_header));
+        if (!this->packet_send(&ack_packet, sizeof(struct au_packet_header)))
+            throw "..."; // Like very lazy
     } catch (...) {
         handle_eptr(std::current_exception());
         throw "Could not send ACK packet";
@@ -466,19 +618,18 @@ stream_socket* au_stream_server_socket::accept_one_client()
 
     // 2. send syn-ack packet in response to syn
 
-    au_packet syn_ack_packet = {0};
-    syn_ack_packet.header.source_port = htons(this->port);
-    syn_ack_packet.header.dest_port = recved_packet.au_data.header.source_port;
+    au_packet syn_ack_packet;
+    FORM_PACKET(syn_ack_packet, this->port, ntohs(recved_packet.au_data.header.source_port), AU_PACKET_SYN | AU_PACKET_ACK)
     syn_ack_packet.header.seq_num = htonl(new_connection->send_buff->get_ack());
     syn_ack_packet.header.ack_num = htonl(new_connection->recv_buff->get_seq());
-    syn_ack_packet.header.flags = AU_PACKET_SYN | AU_PACKET_ACK;
 
     try {
-        new_connection->packet_send(&syn_ack_packet, sizeof(au_packet_header));
+        if (!new_connection->packet_send(&syn_ack_packet, sizeof(au_packet_header)))
+            throw "...";
     } catch (...) {
         handle_eptr(std::current_exception());
         delete new_connection;
-        throw "Could not send SYN-ACk packet";
+        throw "Could not send SYN-ACK packet";
     }
 
     pr_info("%s\n", "SYN-ACK packet sent");
@@ -499,7 +650,6 @@ stream_socket* au_stream_server_socket::accept_one_client()
 
     pr_success("%s\n", "New connection accepted");
     // handshake is done!
-
     return new_connection;
 }
 
@@ -533,11 +683,9 @@ bool au_stream_server_socket::good_packet(ip_packet *packet)
     uint16_t csum = ntohs(packet->au_data.header.csum);
     packet->au_data.header.csum = 0;
     if (get_csum((void *)&packet->au_data, len) != csum) {
-printf("server failed csum\n");
         return false;
     }
     if (packet->au_data.header.dest_port != htons(this->port)) {
-printf("server failed port (server's port: %d, dest port %d)\n", this->port, ntohs(packet->au_data.header.dest_port));
         return false;
     }
     return true;

@@ -52,6 +52,12 @@ size_t send_buffer::get_seq()
     return this->seq;
 }
 
+size_t send_buffer::get_end()
+{
+    std::lock_guard<std::mutex> lock{this->lock};
+    return this->end;
+}
+
 void send_buffer::move_ack(size_t new_ack)
 {
     std::lock_guard<std::mutex> lock{this->lock};
