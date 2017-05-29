@@ -40,5 +40,6 @@
 void print_errno();
 void handle_eptr(std::exception_ptr eptr);
 std::vector<std::string> split(const std::string &s, char delim);
+int is_tcp();
 
 #endif // __COMMON_H__

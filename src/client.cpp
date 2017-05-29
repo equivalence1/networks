@@ -1,4 +1,5 @@
 #include <tcp_socket.h>
+#include <au_stream_socket.h>
 #include <common.h>
 #include <protocol.h>
 #include <opcode.h>
@@ -12,7 +13,9 @@
 
 static const char *host = "localhost";
 static uint16_t port = 40001;
-static struct tcp_client_socket *sock;
+static struct stream_client_socket *sock;
+
+static uint16_t client_port = 123;
 
 /* we only need this class to wrap all data needed
  * to send/recv in background job and pass it as
@@ -22,14 +25,14 @@ static struct tcp_client_socket *sock;
  */
 class op_data_wrapper {
 public:
-    op_data_wrapper(tcp_client_socket *sock, void *buff, int len)
+    op_data_wrapper(stream_client_socket *sock, void *buff, int len)
     {
         this->sock = sock;
         this->buff = buff;
         this->len = len;
     }
 
-    tcp_client_socket* get_sock()
+    stream_client_socket* get_sock()
     {
         return this->sock;
     }
@@ -52,7 +55,7 @@ public:
     }
 
 private:
-    tcp_client_socket *sock;
+    stream_client_socket *sock;
     void *buff;
     int len;
 };
@@ -61,7 +64,7 @@ private:
  * just send buffer on server, wait for response and print it
  */
 static
-void send_and_recv(struct tcp_connection_socket *sock, void *buff, int len)
+void send_and_recv(struct stream_socket *sock, void *buff, int len)
 {
     sock->send(buff, len);
     int32_t result = get_response(sock);
@@ -123,7 +126,11 @@ void handle(const std::string &user_input)
          * We could theoretically just poll our main connection for a result
          * in background, but we can't specify NO_WAIT flag in our recv.
          */
-        tcp_client_socket *new_connection = new tcp_client_socket(host, port);
+        stream_client_socket *new_connection;
+        if (is_tcp())
+            new_connection = new tcp_client_socket(host, port);
+        else
+            new_connection = new au_stream_client_socket(host, client_port++, port);
         op_data_wrapper *odw = new op_data_wrapper(new_connection, buff, len);
         if (pthread_create(&thread, NULL, backgroud_op, odw) < 0)
             pr_warn("%s\n", "Could not start thread for background operation");
@@ -138,7 +145,13 @@ int main(int argc, char *argv[])
         port = atoi(argv[2]);
 
     try {
-        sock = new tcp_client_socket(host, port);
+        if (is_tcp()) {
+            pr_info("%s\n", "using TCP sockets");
+            sock = new tcp_client_socket(host, port);
+        } else {
+            pr_info("%s\n", "using AU sockets");
+            sock = new au_stream_client_socket(host, client_port++, port);
+        }
         sock->connect();
 
         std::string user_input;
@@ -146,6 +159,10 @@ int main(int argc, char *argv[])
             getline(std::cin, user_input);
             if (user_input == "")
                 continue;
+            if (user_input == "exit") {
+                delete sock;
+                break;
+            }
             handle(user_input);
         }
     } catch (...) {

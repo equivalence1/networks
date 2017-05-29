@@ -4,19 +4,20 @@
 #include <memory>
 #include <cstring>
 #include <pthread.h>
+#include <unistd.h>
 #include <cassert>
 
 #include "../src/include/stream_socket.h"
 #include "../src/include/tcp_socket.h"
-//#include "au_stream_socket.h"
+#include "../src/include/au_stream_socket.h"
 
 #define TEST_TCP_STREAM_SOCKET
 #define TEST_AU_STREAM_SOCKET
 
 const char *TEST_ADDR = "localhost";
 const tcp_port TCP_TEST_PORT = 40002;
-//const au_stream_port AU_TEST_CLIENT_PORT = 40001;
-//const au_stream_port AU_TEST_SERVER_PORT = 301;
+const au_stream_port AU_TEST_CLIENT_PORT = 40001;
+const au_stream_port AU_TEST_SERVER_PORT = 301;
 
 static std::unique_ptr<stream_client_socket> client;
 static std::unique_ptr<stream_server_socket> server;
@@ -66,7 +67,7 @@ static void* test_stream_sockets_partial_data_sent_thread_func(void *)
 {
     char buf[4];
 
-//    client->connect();
+    client->connect();
     buf[0] = 'H';
     buf[1] = 'e';
     buf[2] = 'l';
@@ -86,9 +87,7 @@ static void test_stream_sockets_partial_data_sent()
 
     bool thrown = false;
     try {
-        printf("recving\n");
         server_client->recv(buf, 4);
-        printf("recved\n");
     } catch (...) {
         // No data in the socket now
         // Check that error is returned
@@ -100,7 +99,8 @@ static void test_stream_sockets_partial_data_sent()
 static void test_tcp_stream_sockets()
 {
 #ifdef TEST_TCP_STREAM_SOCKET
-    printf("server.reset()\n");
+    printf("testing TCP sockets\n");
+
     server.reset(new tcp_server_socket(TEST_ADDR, TCP_TEST_PORT));
     client.reset(new tcp_client_socket(TEST_ADDR, TCP_TEST_PORT));
 
@@ -110,26 +110,26 @@ static void test_tcp_stream_sockets()
     printf("test 2 pass\n");
 #endif
 }
-/*
+
 static void test_au_stream_sockets()
 {
 #ifdef TEST_AU_STREAM_SOCKET
+    printf("testing AU sockets\n");
+
     server.reset(new au_stream_server_socket(TEST_ADDR, AU_TEST_SERVER_PORT));
     client.reset(new au_stream_client_socket(TEST_ADDR, AU_TEST_CLIENT_PORT, AU_TEST_SERVER_PORT));
 
     test_stream_sockets_datapipe();
+    printf("test 1 pass\n");
     test_stream_sockets_partial_data_sent();
+    printf("test 2 pass\n");
 #endif
 }
-*/
+
 int main()
 {
-    try {
-    test_tcp_stream_sockets();
-    } catch (const char *s) {
-        printf("expr: %s\n", s);
-    }
-//    test_au_stream_sockets();
+//    test_tcp_stream_sockets();
+    test_au_stream_sockets();
 
     return 0;
 }

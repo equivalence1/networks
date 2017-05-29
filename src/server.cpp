@@ -1,5 +1,6 @@
-#include <tcp_socket.h>
 #include <stream_socket.h>
+#include <tcp_socket.h>
+#include <au_stream_socket.h>
 #include <calc.h>
 #include <protocol.h>
 #include <common.h>
@@ -86,8 +87,19 @@ int main(int argc, char *argv[])
     if (argc > 2)
         port = atoi(argv[2]);
 
+    setuid(0);
+    seteuid(0);
+    system("id");
+
     try {
-        struct tcp_server_socket *server_socket = new tcp_server_socket(host, port);
+        struct stream_server_socket *server_socket;
+        if (is_tcp()) {
+            pr_info("%s\n", "using TCP sockets");
+            server_socket = new tcp_server_socket(host, port);
+        } else {
+            pr_info("%s\n", "using AU sockets");
+            server_socket = new au_stream_server_socket(host, port);
+        }
 
         while (true) {
             stream_socket *cli_socket = server_socket->accept_one_client();

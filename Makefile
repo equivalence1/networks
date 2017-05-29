@@ -6,19 +6,19 @@ incdir = src/include
 CXX = g++
 CXXFLAGS = -Wall -Wpedantic -std=c++11
 
-client_sources = client.cpp tcp_socket.cpp common.cpp protocol.cpp opcode.cpp
+client_sources = client.cpp tcp_socket.cpp au_stream_socket.cpp common.cpp protocol.cpp opcode.cpp net_utils.cpp
 client32_objects = $(client_sources:.cpp=.o_32)
 client64_objects = $(client_sources:.cpp=.o_64)
 
-server_sources = server.cpp tcp_socket.cpp common.cpp protocol.cpp calc.cpp opcode.cpp
+server_sources = server.cpp tcp_socket.cpp au_stream_socket.cpp common.cpp protocol.cpp calc.cpp opcode.cpp net_utils.cpp
 server_objects = $(server_sources:.cpp=.o_64)
 
-test_sources = tcp_socket.cpp test.cpp common.cpp
+test_sources = tcp_socket.cpp au_stream_socket.cpp test.cpp common.cpp net_utils.cpp
 test_objects = $(test_sources:.cpp=.o_64)
 
 all: $(bindir) $(objdir) client32 client64 server test
 
-debug: CXXFLAGS += -DDEBUG
+debug: CXXFLAGS += -DDEBUG -g
 debug: all
 
 $(bindir):

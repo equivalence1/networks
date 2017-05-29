@@ -1,7 +1,7 @@
 #ifndef __PROTOCOL_H__
 #define __PROTOCOL_H__
 
-#include <tcp_socket.h>
+#include <stream_socket.h>
 
 #include <stdint.h>
 #include <string>
@@ -27,6 +27,6 @@
 
 void* user_to_net(const std::string &user_query, int *len);
 std::pair<uint8_t, std::vector<int32_t> > net_to_operands(void *buff, size_t len);
-int32_t get_response(tcp_connection_socket *sock);
+int32_t get_response(stream_socket *sock);
 
 #endif // __PROTOCOL_H__

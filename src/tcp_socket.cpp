@@ -1,5 +1,6 @@
 #include <tcp_socket.h>
 #include <common.h>
+#include <net_utils.h>
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -10,35 +11,6 @@
 #include <netinet/tcp.h>
 #include <mutex>
 
-
-/*
- * get host string and port number of address.
- * @param ipstr should be a char array with a length >= NI_MAXHOST
- */
-static
-int get_addr_host_port(const struct sockaddr_in *addr, char *ipstr, int *port)
-{
-    *port = ntohs(addr->sin_port);
-    if (inet_ntop(AF_INET, &addr->sin_addr, ipstr, NI_MAXHOST) == NULL)
-        return -1;
-    else
-        return 0;
-}
-
-/*
- * used to notify user if connect/bind failed on returned after
- * getaddrinfo address
- */
-static
-void warn_op_fail(const char *op, struct addrinfo *rp)
-{
-    char ipstr[NI_MAXHOST];
-    int port;
-
-    print_errno();
-    if (get_addr_host_port((struct sockaddr_in *)rp->ai_addr, ipstr, &port) >= 0)
-        pr_warn("Could not %s on %s:%d\n", op, ipstr, port);
-}
 
 tcp_connection_socket::tcp_connection_socket()
 {
@@ -149,7 +121,7 @@ void tcp_client_socket::connect()
 
     struct addrinfo *res, *rp;
 
-    // resolve given hostname to use it in bind
+    // resolve given hostname to use it in connect
     if (getaddrinfo(this->hostname, port_s, &hints, &res) < 0) {
         print_errno();
         throw "Could not resolve hostname";
@@ -236,13 +208,6 @@ tcp_server_socket::tcp_server_socket(const char *hostname, port_t port): hostnam
     }
 
     pr_success("%s\n", "Server socket is listening for connections");
-}
-
-static int inline bad_sockfd(int sockfd)
-{
-    return (sockfd == ENETDOWN) || (sockfd == EPROTO) || (sockfd == ENOPROTOOPT)
-            || (sockfd == EHOSTDOWN) || (sockfd == ENONET) || (sockfd == EHOSTUNREACH)
-            || (sockfd == EOPNOTSUPP) || (sockfd == ENETUNREACH) || (sockfd == EAGAIN);
 }
 
 stream_socket* tcp_server_socket::accept_one_client()

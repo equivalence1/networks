@@ -76,7 +76,7 @@ net_to_operands(void *buff, size_t len)
     return std::make_pair(opcode, operands);
 }
 
-int32_t get_response(tcp_connection_socket *sock)
+int32_t get_response(stream_socket *sock)
 {
     uint32_t result;
     sock->recv(&result, sizeof result);
