@@ -97,12 +97,13 @@ void au_stream_socket::send(const void *buff, size_t size)
         int sent = this->send_buff->write((char *)buff + total_sent, size - total_sent);
         total_sent += sent;
         if (sent == 0) {
-            // no space in buffer. Sleep for 0.5 sec and give sender chance to send something
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            // no space in buffer. Sleep for 0.1 sec and give sender chance to send something
+            std::unique_lock<std::mutex> lck(this->lock);
+            this->send_sync.wait_for(lck, std::chrono::milliseconds(100));
         } else {
             // notify sender that buffer is not empty anymore
             std::unique_lock<std::mutex> lck(this->lock);
-            this->sync.notify_one();
+            this->send_sync.notify_one();
         }
     }
 
@@ -110,7 +111,7 @@ void au_stream_socket::send(const void *buff, size_t size)
 
     // wait for ack to come
     while (end > this->send_buff->get_ack())
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 void au_stream_socket::recv(void *buff, size_t size)
@@ -126,7 +127,8 @@ void au_stream_socket::recv(void *buff, size_t size)
             if (state.load() == AU_SOCKET_STATE_CLOSED)
                 throw "Connection is closed";
             // buffer is empty. Sleep a little bit so maybe something will be received
-            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 0.5 sec
+            std::unique_lock<std::mutex> lck(this->lock);
+            this->recv_sync.wait_for(lck, std::chrono::milliseconds(100));
         }
     }
 }
@@ -218,12 +220,12 @@ void au_stream_socket::sender_fun()
                 this->lock.unlock();
             }
 
-            if (this->send_buff->has_to_send())
+            if (this->send_buff->has_to_send()) {
                 this->send_from_buff();
-            else {
-                // nothing to send -- wait for 3 secs
+            } else {
+                // nothing to send -- wait for 0.01 secs
                 std::unique_lock<std::mutex> lck(this->lock);
-                this->sync.wait_for(lck, std::chrono::seconds(3));
+                this->send_sync.wait_for(lck, std::chrono::milliseconds(10));
             }
         } catch (...) {
             handle_eptr(std::current_exception());
@@ -277,7 +279,7 @@ bool au_stream_socket::need_resend()
     std::lock_guard<std::mutex> lockg{this->lock};
 
     double since_last_ack = get_time_sec_since(this->last_ack);
-    return ((since_last_ack > 5 && this->send_buff->has_unapproved()) || same_ack >= 3);
+    return ((since_last_ack > FAST_RETRANSMIT_TIMEOUT_SEC && this->send_buff->has_unapproved()) || same_ack >= 3);
 }
 
 // sends one packet from send_buff
@@ -381,12 +383,13 @@ void au_stream_socket::check_alive()
 
 void au_stream_socket::recved_ack(au_packet *packet)
 {
-    std::lock_guard<std::mutex> lockg{this->lock};
+    std::unique_lock<std::mutex> lck(this->lock);
 
     this->last_ack = std::chrono::system_clock::now();
 
     if (this->send_buff->get_ack() < ntohl(packet->header.ack_num)) {
         this->send_buff->move_ack(ntohl(packet->header.ack_num));
+        this->send_sync.notify_one();
         this->same_ack = 1;
     } else {
         // we received same ack
@@ -396,25 +399,14 @@ void au_stream_socket::recved_ack(au_packet *packet)
 
 void au_stream_socket::recved_data(ip_packet *packet)
 {
-    if (ntohl(packet->au_data.header.seq_num) <= this->recv_buff->get_seq()) {
-        // seems like sender tries to retransmit us some packet
-        // noop
-    } else {
-        /*
-         * This packet may contain some old data along with new one.
-         * Imagine the situation when sender send some data but did not recv
-         * ACK packet for it during timeout, though receiver sends it. 
-         * Now, right after send does send_buff->need_resend()
-         * some new data arrives in this buffer. So send_buff->end increased which means
-         * we have some new data for receiver. However, when we start to send all this data
-         * our packet will contain old data as well as new one. If we just write it to
-         * recv_buff of receiver, old data would be written twice.
-         *
-         * To prevent it, we calculate how much data we should actually write to the buffer.
-         */
-        size_t size = ntohl(packet->au_data.header.seq_num) - this->recv_buff->get_seq();
-        int offset = (int)get_data_len(packet) - (int)size;
-        this->recv_buff->write(packet->au_data.data + offset, size /*get_data_len(packet)*/);
+    size_t size = ntohl(packet->au_data.header.seq_num) - this->recv_buff->get_seq();
+    int offset = (int)get_data_len(packet) - (int)size;
+
+    // offset == 0 means we really got right data 
+    if (offset == 0) {
+        std::unique_lock<std::mutex> lck(this->lock);
+        this->recv_sync.notify_one();
+        this->recv_buff->write(packet->au_data.data, size);
     }
     this->send_ack();
 }

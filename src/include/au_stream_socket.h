@@ -109,7 +109,8 @@ public:
     std::thread *receiver;
     std::thread *sender;
     std::mutex lock;
-    std::condition_variable sync;
+    std::condition_variable send_sync;
+    std::condition_variable recv_sync;
 
 
     std::atomic<int> state;
@@ -131,12 +132,15 @@ public:
     port_t port;
 
 
+    /*
+     * This timeouts I just chose on random
+     */
     static const size_t BUFFER_SIZE = 4000;
     static constexpr double RECV_TIMEOUT_SEC = 5;
     static constexpr double SINGLE_RECV_TIMEOUT_SEC = 0.5;
     static constexpr double SEND_TIMEOUT_SEC = 5;
     static constexpr double SINGLE_SEND_TIMEOUT_SEC = 0.5;
-    static constexpr double FAST_RETRANSMIT_TIMEOUT_SEC = 15;
+    static constexpr double FAST_RETRANSMIT_TIMEOUT_SEC = 1; // if it's high test works too long. 
     static constexpr double KEEP_ALIVE_TIMEOUT_SEC = 30;
     static constexpr double ABORT_CONNECTION_TIMEOUT = 3 * KEEP_ALIVE_TIMEOUT_SEC;
 };
