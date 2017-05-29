@@ -135,7 +135,7 @@ bool au_stream_socket::packet_send(au_packet *packet, size_t size)
 
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     while (get_time_sec_since(start) < au_stream_socket::SEND_TIMEOUT_SEC) {
-        int res = ::sendto(this->sockfd, (void *)packet, size, 0, &this->remote_addr, this->addrlen);
+        int res = ::sendto(this->sockfd, (void *)packet, size, MSG_NOSIGNAL, &this->remote_addr, this->addrlen);
         if (res == (int)size)
             return true;
         if (res == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS))
